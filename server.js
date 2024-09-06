@@ -67,34 +67,39 @@ app.post('/api/email_check', async (req, res) => {
   }
 });
 
+// EMAIL forgot pass check existing cus and haul
+app.post('/api/email_check_forgotpass', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  try {
+    const checkEmail = await pool.query(`
+      SELECT 'customer' AS table_name FROM customer WHERE cus_email = $1
+      UNION ALL
+      SELECT 'hauler' AS table_name FROM hauler WHERE haul_email = $1
+    `, [email]);
+
+    if (checkEmail.rows.length === 0) {
+      return res.status(400).json({ error: 'Email doesn\'t exists' });
+    }
+
+    // Email does not exist in any table
+    return res.status(200).json({ message: 'Email is available', table: checkEmail.rows[0].table_name });
+
+  } catch (error) {
+    console.error('Error checking email:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 
 // 1. CREATE (with email check)
 app.post('/api/signup', async (req, res) => {
   const { fname, lname, email, password } = req.body;
   try {
-    // Check if customer already exists by email
-    // const checkEmail = await pool.query(
-    //   'SELECT * FROM CUSTOMER WHERE cus_email = $1',
-    //   [email]
-    // );
-
-    // const checkEmail = await pool.query(`
-    //   SELECT 'customer' AS table_name FROM customer WHERE cus_email = $1
-    //   UNION ALL
-    //   SELECT 'hauler' AS table_name FROM hauler WHERE haul_email = $1
-    //   UNION ALL
-    //   SELECT 'operational_dispatcher' AS table_name FROM operational_dispatcher WHERE op_email = $1
-    //   UNION ALL
-    //   SELECT 'billing_officer' AS table_name FROM billing_officer WHERE bo_email = $1
-    //   UNION ALL
-    //   SELECT 'account_manager' AS table_name FROM account_manager WHERE acc_email = $1
-    // `, [email]);
-
-    // if (checkEmail.rows.length > 0) {
-    //   //return res.status(400).json({ error: 'Email already exists' });
-    //   return res.status(400).json(checkEmail.rows[0]);
-    // }
-
     // Hash the password before storing it
     const hashedPassword = hashPassword(password);
 
@@ -103,6 +108,10 @@ app.post('/api/signup', async (req, res) => {
       'INSERT INTO CUSTOMER (cus_fname, cus_lname, cus_email, cus_password) VALUES ($1, $2, $3, $4) RETURNING *',
       [fname, lname, email, hashedPassword]
     );
+    // const result = await pool.query(
+    //   'INSERT INTO HAULER (haul_fname, haul_lname, haul_email, haul_password, acc_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+    //   [fname, lname, email, hashedPassword, 1000]
+    // );
 
     res.status(201).json(result.rows[0]);
   }
@@ -118,30 +127,51 @@ app.post('/api/login', async (req, res) => {
 
   try {
     // Check if customer exists by email
-    const checkEmail = await pool.query(
+    const checkCustomerEmail = await pool.query(
       'SELECT * FROM CUSTOMER WHERE cus_email = $1',
       [email]
     );
 
-    if (checkEmail.rows.length === 0) {
-      // If the email does not exist in the database
-      return res.status(404).json({ error: 'Email address not found' });
-    }
+    if (checkCustomerEmail.rows.length > 0) {
+      // Get the hashed password from the database
+      const customer = checkCustomerEmail.rows[0];
+      const storedHashedPassword = customer.cus_password;
 
-    // Get the hashed password from the database
-    const customer = checkEmail.rows[0];
-    const storedHashedPassword = customer.cus_password;
+      // Hash the incoming password
+      const hashedPassword = hashPassword(password);
 
-    // Hash the incoming password
-    const hashedPassword = hashPassword(password);
+      // Compare the hashed password with the stored hashed password
+      if (hashedPassword === storedHashedPassword) {
+        return res.status(200).json({ message: 'User found in customer' });
 
-    // Compare the hashed password with the stored hashed password
-    if (hashedPassword !== storedHashedPassword) {
+      }
       return res.status(401).json({ error: 'Incorrect password' });
     }
 
-    // If password is correct, login is successful
-    res.status(200).json({ message: 'Login successful', customer });
+    // Check if hauler exists by email
+    const checkHaulerEmail = await pool.query(
+      'SELECT * FROM HAULER WHERE haul_email = $1',
+      [email]
+    );
+
+    if (checkHaulerEmail.rows.length > 0) {
+      // Get the hashed password from the database
+      const customer = checkHaulerEmail.rows[0];
+      const storedHashedPassword = customer.haul_password;
+
+      // Hash the incoming password
+      const hashedPassword = hashPassword(password);
+
+      // Compare the hashed password with the stored hashed password
+      if (hashedPassword === storedHashedPassword) {
+        return res.status(201).json({ message: 'User found in hauler' });
+
+      }
+      return res.status(401).json({ error: 'Incorrect password' });
+    }
+
+    // If email not found in either table
+    return res.status(404).json({ error: 'Email address not found in customer or hauler tables' });
   }
   catch (error) {
     console.error('Error during login:', error.message);
@@ -150,12 +180,79 @@ app.post('/api/login', async (req, res) => {
 });
 
 
+// UPDATE PASSWORD endpoint
+app.post('/api/update_password', async (req, res) => {
+  const { email, newPassword } = req.body;
+
+  try {
+    // Check if the email exists in the 'customer' table
+    const checkCustomerEmail = await pool.query(
+      'SELECT cus_password FROM CUSTOMER WHERE cus_email = $1',
+      [email]
+    );
+
+    if (checkCustomerEmail.rows.length > 0) {
+      const currentPassword = checkCustomerEmail.rows[0].cus_password;
+      const hashedNewPassword = hashPassword(newPassword);
+
+      // Check if the new password is the same as the current password
+      if (currentPassword === hashedNewPassword) {
+        return res.status(400).json({ error: 'New password cannot be the same as the old password' });
+      }
+
+      // Update the password if it is different
+      await pool.query(
+        'UPDATE CUSTOMER SET cus_password = $1 WHERE cus_email = $2',
+        [hashedNewPassword, email]
+      );
+
+      return res.status(200).json({ message: 'Password updated successfully for customer' });
+    }
+
+    // Check if the email exists in the 'hauler' table
+    const checkHaulerEmail = await pool.query(
+      'SELECT haul_password FROM HAULER WHERE haul_email = $1',
+      [email]
+    );
+
+    if (checkHaulerEmail.rows.length > 0) {
+      const currentPassword = checkHaulerEmail.rows[0].haul_password;
+      const hashedNewPassword = hashPassword(newPassword);
+
+      // Check if the new password is the same as the current password
+      if (currentPassword === hashedNewPassword) {
+        return res.status(400).json({ error: 'New password cannot be the same as the old password' });
+      }
+
+      // Update the password if it is different
+      await pool.query(
+        'UPDATE HAULER SET haul_password = $1 WHERE haul_email = $2',
+        [hashedNewPassword, email]
+      );
+
+      return res.status(200).json({ message: 'Password updated successfully for hauler' });
+    }
+
+    // If email not found in either table
+    return res.status(404).json({ error: 'Email address not found in customer or hauler tables' });
+  }
+  catch (error) {
+    console.error('Error during password update:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+
+
 
 //EMAIL vrfctn
 // Create a transporter using the SMTP configuration
 const transporter = nodemailer.createTransport(smtp);
 
 // Endpoint to send an email
+
+//email sign up
 app.post('/api/send_email', async (req, res) => {
   const { to, subject, code } = req.body;
 
@@ -186,7 +283,48 @@ app.post('/api/send_email', async (req, res) => {
     });
 
     res.status(200).json({ messageId: info.messageId });
-    console.log('Email sent successfully');
+    //console.log('Email sent successfully');
+  } catch (error) {
+    console.error('Error sending email:', error.message);
+    res.status(500).json({ error: 'Failed to send email' });
+  }
+});
+
+//email forgot pass
+app.post('/api/send_email_forgotpass', async (req, res) => {
+  const { to, subject, code } = req.body;
+
+  try {
+    const info = await transporter.sendMail({
+      from: smtp.auth.user, // Sender address
+      to: to,              // List of receivers
+      subject: subject,    // Subject line
+      html: `
+  <html>
+  <body style="font-family: Arial, sans-serif; color: #fff; margin: 0; padding: 0;">
+    <div style="background-color: #2c3e50; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto; border: 10px solid #2ecc71;">
+      <h1 style="color: #ecf0f1; text-align: center;">Trashtrack</h1>
+      <h2 style="color: #ecf0f1;">Password Reset Request</h2>
+      <p style="color: #ecf0f1;">Dear User,</p>
+      <p style="color: #ecf0f1;">You have requested to reset your password for your Trashtrack account.</p>
+      <p style="color: #ecf0f1;">Please use the following verification code to proceed with resetting your password:</p>
+      <div style="background-color: #1abc9c; padding: 15px; border-radius: 4px; max-width: fit-content; margin: 0 auto;">
+        <h3 style="color: #fff; font-size: 30px; text-align: left; margin: 0;">
+          ${code}
+        </h3>
+      </div>
+      <p style="color: #ecf0f1;">This code is valid for 5 minutes.</p>
+      <p style="color: #ecf0f1;">If you did not request a password reset, please ignore this email. Your account will remain secure.</p>
+      <p style="color: #ecf0f1;">Best regards,<br>The Trashtrack Team</p>
+    </div>
+  </body>
+</html>
+
+  `,
+    });
+
+    res.status(200).json({ messageId: info.messageId });
+    // console.log('Email sent successfully');
   } catch (error) {
     console.error('Error sending email:', error.message);
     res.status(500).json({ error: 'Failed to send email' });
