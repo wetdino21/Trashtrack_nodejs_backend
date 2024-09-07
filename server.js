@@ -31,7 +31,165 @@ const pool = new Pool({
 app.use(bodyParser.json());
 app.use(cors());
 
+////////////////////////////////////////
+
+const fs = require('fs');
+const https = require('https');
+
+// Function to generate a random, secure verification code
+function generateRandomCode() {
+  return crypto.randomBytes(3).toString('hex').toUpperCase(); // 6-character hex code
+}
+
+// Email sending function
+async function sendCodeForgotPassEmail(to, code) {
+  try {
+    const info = await transporter.sendMail({
+      from: smtp.auth.user, // Sender address
+      to: to,
+      subject: 'Verification Code',          // List of receivers
+      html: `
+  <html>
+  <body style="font-family: Arial, sans-serif; color: #fff; margin: 0; padding: 0;">
+    <div style="background-color: #2c3e50; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto; ">
+      <h1 style="color: #1abc9c; text-align: center; font-size: 40px">Trashtrack</h1>
+      <h2 style="color: #ecf0f1;">Password Reset Request</h2>
+      <p style="color: #ecf0f1;">Dear User,</p>
+      <p style="color: #ecf0f1;">You have requested to reset your password for your Trashtrack account.</p>
+      <p style="color: #ecf0f1;">Please use the following verification code to proceed with resetting your password:</p>
+      <div style="background-color: #1abc9c; padding: 15px; border-radius: 4px; max-width: fit-content; margin: 0 auto;">
+        <h3 style="color: #fff; font-size: 30px; text-align: left; margin: 0;">
+          ${code}
+        </h3>
+      </div>
+      <p style="color: #ecf0f1;">This code is valid for 5 minutes.</p>
+      <p style="color: #ecf0f1;">If you did not request a password reset, please ignore this email. Your account will remain secure.</p>
+      <p style="color: #ecf0f1;">Best regards,<br>The Trashtrack Team</p>
+    </div>
+  </body>
+</html>
+
+  `,
+    });
+    return info.messageId;
+  } catch (error) {
+    console.error('Datbase error:', error.message);
+    throw new Error('Failed to send email');
+  }
+}
+// Rate limiting
+const MAX_ATTEMPTS = 5;
+const RATE_LIMIT = 1 * 60 * 1000; // 1 minutes
+const emailLimitCache = {};
+
 // API Endpoints
+
+// send verification code (with check email)
+app.post('/api/send_code', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  const checkEmail = await pool.query(`
+    SELECT 'customer' AS table_name FROM customer WHERE cus_email = $1
+    UNION ALL
+    SELECT 'hauler' AS table_name FROM hauler WHERE haul_email = $1
+  `, [email]);
+
+  if (checkEmail.rows.length === 0) {
+    return res.status(400).json({ error: 'No associated account with this email!' });
+  }
+
+
+
+  if (emailLimitCache[email] && Date.now() - emailLimitCache[email] < RATE_LIMIT) {
+    console.error('Too many requests. Please try again later.'); // check code in CMD
+
+    const timeremain = (60000 - (emailLimitCache[email] && Date.now() - emailLimitCache[email]));
+    return res.status(429).json({ error: 'Too many requests. Please try again later.', timeremain: timeremain });// Pass remaining time
+  }
+
+  emailLimitCache[email] = Date.now();
+
+  const checkExistingCode = await pool.query(`
+    SELECT * FROM email_verification WHERE email = $1
+  `, [email]);
+
+  if (checkExistingCode.rows.length > 0) {
+    await pool.query(
+      'DELETE FROM email_verification WHERE email = $1',
+      [email]
+    );
+  }
+
+  //code genreratd
+  const code = generateRandomCode();
+  console.error(code); // check code in CMD
+  const expiration = Date.now() + 5 * 60 * 1000; // 5 minutes
+  const hashedCode = hashPassword(code);
+
+  try {
+    await pool.query(
+      'INSERT INTO email_verification (email, email_code, email_expire) VALUES ($1, $2, $3)',
+      [email, hashedCode, expiration]
+    );
+
+    await sendCodeForgotPassEmail(email, code); //call function to send email
+
+    return res.status(200).json({ message: 'Verification code sent' });
+  } catch (error) {
+    console.error('Datbase error:', error.message);
+    return res.status(500).json({ error: 'Failed to send verification code' });
+  }
+});
+
+// verify the code
+app.post('/api/verify_code', async (req, res) => {
+  const { email, userInputCode } = req.body;
+  try {
+    const result = await pool.query(
+      'SELECT * FROM email_verification WHERE email = $1',
+      [email]
+    );
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'No verification record found' });
+    }
+
+    const { email_code, email_expire, email_attempts } = result.rows[0];
+    const currentTime = Date.now();
+
+    if (currentTime > email_expire) {
+      return res.status(400).json({ error: 'Verification code has expired' }); //
+    }
+
+    if (email_attempts >= MAX_ATTEMPTS) {
+      return res.status(429).json({ error: 'Too many failed attempts. Please request a new code.' }); //
+    }
+
+    const hashedUserInput = hashPassword(userInputCode);
+    if (hashedUserInput !== email_code) {
+      await pool.query(
+        'UPDATE email_verification SET email_attempts = $1 WHERE email = $2',
+        [email_attempts + 1, email]
+      );
+      return res.status(401).json({ error: 'Incorrect verification code' });
+    }
+
+    await pool.query(
+      'DELETE FROM email_verification WHERE email = $1',
+      [email]
+    );
+
+    res.status(200).json({ message: 'Verification successful' });
+  } catch (error) {
+    console.error('Datbase error:', error.message);
+    res.status(500).json({ error: 'Failed to verify code' });
+  }
+});
+/////////////////////////////////////////////
 
 // 1. EMAIL check existing
 app.post('/api/email_check', async (req, res) => {
