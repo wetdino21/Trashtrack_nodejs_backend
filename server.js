@@ -27,9 +27,13 @@ const pool = new Pool({
   port: 5432,
 });
 
+
 // Middleware
-app.use(bodyParser.json());
-app.use(cors());
+// app.use(bodyParser.json());
+// app.use(cors());
+// Increase the limit for JSON and URL-encoded payloads
+app.use(bodyParser.json({ limit: '50mb' })); // Adjust the limit as needed
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 ////////////////////////////////////////
 
@@ -84,8 +88,73 @@ const emailLimitCache = {};
 
 // API Endpoints
 
+// send create verification code (with check email)
+app.post('/api/send_code_createacc', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  const checkEmail = await pool.query(`
+    SELECT 'customer' AS table_name FROM customer WHERE cus_email = $1
+    UNION ALL
+    SELECT 'hauler' AS table_name FROM hauler WHERE haul_email = $1
+    UNION ALL
+    SELECT 'operational_dispatcher' AS table_name FROM operational_dispatcher WHERE op_email = $1
+    UNION ALL
+    SELECT 'billing_officer' AS table_name FROM billing_officer WHERE bo_email = $1
+    UNION ALL
+    SELECT 'account_manager' AS table_name FROM account_manager WHERE acc_email = $1
+  `, [email]);
+
+  if (checkEmail.rows.length > 0) {
+    return res.status(400).json({ error: 'Email already exists', table: checkEmail.rows[0].table_name });
+  }
+
+  if (emailLimitCache[email] && Date.now() - emailLimitCache[email] < RATE_LIMIT) {
+    console.error('Too many requests. Please try again later.'); // check code in CMD
+
+    const timeremain = (60000 - (emailLimitCache[email] && Date.now() - emailLimitCache[email]));
+    return res.status(429).json({ error: 'Too many requests. Please try again later.', timeremain: timeremain });// Pass remaining time
+  }
+
+  emailLimitCache[email] = Date.now();
+
+  const checkExistingCode = await pool.query(`
+    SELECT * FROM email_verification WHERE email = $1
+  `, [email]);
+
+  if (checkExistingCode.rows.length > 0) {
+    await pool.query(
+      'DELETE FROM email_verification WHERE email = $1',
+      [email]
+    );
+  }
+
+  //code genreratd
+  const code = generateRandomCode();
+  console.error(code); // check code in CMD
+  const expiration = Date.now() + 5 * 60 * 1000; // 5 minutes
+  const hashedCode = hashPassword(code);
+
+  try {
+    await pool.query(
+      'INSERT INTO email_verification (email, email_code, email_expire) VALUES ($1, $2, $3)',
+      [email, hashedCode, expiration]
+    );
+
+    await sendCodeForgotPassEmail(email, code); //call function to send email
+
+    return res.status(200).json({ message: 'Verification code sent' });
+  } catch (error) {
+    console.error('Datbase error:', error.message);
+    return res.status(500).json({ error: 'Failed to send verification code' });
+  }
+});
+
 // send verification code (with check email)
-app.post('/api/send_code', async (req, res) => {
+app.post('/api/send_code_forgotpass', async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
@@ -154,19 +223,21 @@ app.post('/api/verify_code', async (req, res) => {
       [email]
     );
 
-    if (!result.rows[0]) {
-      return res.status(404).json({ error: 'No verification record found' });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No associated account with this email!' });
     }
+    // if (!result.rows[0]) {
+    //   return res.status(404).json({ error: 'No verification record found' });
+    // }
 
     const { email_code, email_expire, email_attempts } = result.rows[0];
     const currentTime = Date.now();
-
     if (currentTime > email_expire) {
       return res.status(400).json({ error: 'Verification code has expired' }); //
     }
 
     if (email_attempts >= MAX_ATTEMPTS) {
-      return res.status(429).json({ error: 'Too many failed attempts. Please request a new code.' }); //
+      return res.status(429).json({ error: 'Too many failed attempts. Please resend a new code.' }); //
     }
 
     const hashedUserInput = hashPassword(userInputCode);
@@ -190,6 +261,90 @@ app.post('/api/verify_code', async (req, res) => {
   }
 });
 /////////////////////////////////////////////
+
+//FETCH ALL DATA 
+// app.post('/api/fetch_user_data', async (req, res) => {
+//   const { email } = req.body;
+//   try {
+//     // First, check in the CUSTOMER table
+//     let result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
+
+//     // If not found in CUSTOMER table, check in the HAULER table
+//     if (result.rows.length === 0) {
+//       result = await pool.query('SELECT * FROM HAULER WHERE haul_email = $1', [email]);
+//     }
+//     if(result.rows.length > 0){
+//       const user = result.rows[0];
+
+//       // Convert 'cus_profile' from bytea to base64
+//       const base64Image = user.cus_profile
+//         ? user.cus_profile.toString('base64') // Convert bytea to base64 string
+//         : null;
+
+//       // Log the base64 string
+//       console.log('Base64 Encoded Image:', base64Image);
+//     }
+
+//     // Check if any data was found
+//     if (result.rows.length > 0) {
+//       // const user = result.rows[0];
+//       // // Convert bytea data to base64 string
+//       // user.cus_profile = user.cus_profile.toString('base64');
+
+//       res.json(user);
+//     } else {
+//       res.status(404).json({ error: 'User not found' });
+//     }
+//   } catch (error) {
+//     console.error('Error fetching user data:', error.message);
+//     res.status(500).json({ error: 'Database error' });
+//   }
+// });
+
+//FETCH ALL DATA 
+app.post('/api/fetch_user_data', async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    let result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
+
+    // If not found in CUSTOMER table, check in the HAULER table
+    if (result.rows.length === 0) {
+      result = await pool.query('SELECT * FROM HAULER WHERE haul_email = $1', [email]);
+    }
+
+    // Check if any user data was found
+    if (result.rows.length > 0) {
+      const user = result.rows[0];
+
+      // Handle profile image for both CUSTOMER and HAULER tables
+      let base64Image = null;
+      if (user.cus_profile) {
+        base64Image = user.cus_profile.toString('base64');  // If cus_profile exists
+      } else if (user.haul_profile) {
+        base64Image = user.haul_profile.toString('base64'); // If haul_profile exists
+      }
+
+      // Add the base64 image data to the response object
+      const responseData = {
+        ...user,
+        profileImage: base64Image  // Add the base64-encoded image here
+      };
+
+      // Log the base64 string (optional for debugging)
+      //console.log('Base64 Encoded Image:', base64Image);
+
+      res.json(responseData);
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching user data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
 
 // 1. EMAIL check existing
 app.post('/api/email_check', async (req, res) => {
@@ -253,8 +408,29 @@ app.post('/api/email_check_forgotpass', async (req, res) => {
   }
 });
 
+// 1. CREATE ACC (GOOGLE REGISTER)
+app.post('/api/signup_google', async (req, res) => {
+  const { fname, lname, email, photo } = req.body;
+  try {
 
-// 1. CREATE (with email check)
+    // Convert base64 string back to bytea
+    const photoBytes = photo ? Buffer.from(photo, 'base64') : null;
+
+    // Insert the new customer into the CUSTOMER table with hashed password
+    const result = await pool.query(
+      'INSERT INTO CUSTOMER (cus_fname, cus_lname, cus_email, cus_status, cus_type, cus_auth_method, cus_profile) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [fname, lname, email, 'active', 'non-contractual', 'google', photoBytes]
+    );
+
+    res.status(201).json(result.rows[0]);
+  }
+  catch (error) {
+    console.error('Error inserting user:', error.message);//show debug print on server cmd
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// 1. CREATE ACC (email_password)
 app.post('/api/signup', async (req, res) => {
   const { fname, lname, email, password } = req.body;
   try {
@@ -263,13 +439,9 @@ app.post('/api/signup', async (req, res) => {
 
     // Insert the new customer into the CUSTOMER table with hashed password
     const result = await pool.query(
-      'INSERT INTO CUSTOMER (cus_fname, cus_lname, cus_email, cus_password) VALUES ($1, $2, $3, $4) RETURNING *',
-      [fname, lname, email, hashedPassword]
+      'INSERT INTO CUSTOMER (cus_fname, cus_lname, cus_email, cus_password, cus_status, cus_type, cus_auth_method) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [fname, lname, email, hashedPassword, 'active', 'non-contractual', 'email_password']
     );
-    // const result = await pool.query(
-    //   'INSERT INTO HAULER (haul_fname, haul_lname, haul_email, haul_password, acc_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-    //   [fname, lname, email, hashedPassword, 1000]
-    // );
 
     res.status(201).json(result.rows[0]);
   }
@@ -293,15 +465,27 @@ app.post('/api/login', async (req, res) => {
     if (checkCustomerEmail.rows.length > 0) {
       // Get the hashed password from the database
       const customer = checkCustomerEmail.rows[0];
-      const storedHashedPassword = customer.cus_password;
+      const authType = customer.cus_auth_method;
+      const status = customer.cus_status;
 
+      if (authType == 'google') {
+        return res.status(402).json({ message: 'Looks like this account is signed up with google. Please login with google' });
+      }
+
+      const storedHashedPassword = customer.cus_password;
+     
       // Hash the incoming password
       const hashedPassword = hashPassword(password);
 
       // Compare the hashed password with the stored hashed password
       if (hashedPassword === storedHashedPassword) {
+        if (status == 'deactivated') {
+          return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
+        }
+        if (status == 'suspended') {
+          return res.status(203).json({ message: 'Your Accoount is currently suspended' });
+        }
         return res.status(200).json({ message: 'User found in customer' });
-
       }
       return res.status(401).json({ error: 'Incorrect password' });
     }
@@ -314,16 +498,27 @@ app.post('/api/login', async (req, res) => {
 
     if (checkHaulerEmail.rows.length > 0) {
       // Get the hashed password from the database
-      const customer = checkHaulerEmail.rows[0];
-      const storedHashedPassword = customer.haul_password;
+      const hauler = checkHaulerEmail.rows[0];
+      const authType = hauler.haul_auth_method;
+      const status = hauler.haul_status;
 
+      if (authType == 'google') {
+        return res.status(402).json({ message: 'Looks like this account is signed up with google. Please login with google' });
+      }
+
+      const storedHashedPassword = hauler.haul_password;
       // Hash the incoming password
       const hashedPassword = hashPassword(password);
 
       // Compare the hashed password with the stored hashed password
       if (hashedPassword === storedHashedPassword) {
+        if (status == 'deactivated') {
+          return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
+        }
+        if (status == 'suspended') {
+          return res.status(203).json({ message: 'Your Accoount is currently suspended' });
+        }
         return res.status(201).json({ message: 'User found in hauler' });
-
       }
       return res.status(401).json({ error: 'Incorrect password' });
     }
@@ -337,6 +532,68 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+////////////
+// LOGIN with GOOGLE
+app.post('/api/login_google', async (req, res) => {
+  const { email} = req.body;
+
+  try {
+    // Check if customer exists by email
+    const checkCustomerEmail = await pool.query(
+      'SELECT * FROM CUSTOMER WHERE cus_email = $1',
+      [email]
+    );
+
+    if (checkCustomerEmail.rows.length > 0) {
+      // Get the hashed password from the database
+      const customer = checkCustomerEmail.rows[0];
+      const authType = customer.cus_auth_method;
+      const status = customer.cus_status;
+
+      if (authType == 'email_password') {
+        return res.status(402).json({ message: 'Looks like this account is registered with email and password. Please log in using your email and password.' });
+      }
+      if (status == 'deactivated') {
+        return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
+      }
+      if (status == 'suspended') {
+        return res.status(203).json({ message: 'Your Accoount is currently suspended' });
+      }
+      return res.status(200).json({ message: 'User found in customer' });
+    }
+
+    // Check if hauler exists by email
+    const checkHaulerEmail = await pool.query(
+      'SELECT * FROM HAULER WHERE haul_email = $1',
+      [email]
+    );
+
+    if (checkHaulerEmail.rows.length > 0) {
+      // Get the hashed password from the database
+      const hauler = checkHaulerEmail.rows[0];
+      const authType = hauler.haul_auth_method;
+      const status = hauler.haul_status;
+
+      if (authType == 'email_password') {
+        return res.status(402).json({ message: 'Looks like this account is registered with email and password. Please log in using your email and password.' });
+      }
+      if (status == 'deactivated') {
+        return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
+      }
+      if (status == 'suspended') {
+        return res.status(203).json({ message: 'Your Accoount is currently suspended' });
+      }
+      return res.status(201).json({ message: 'User found in hauler' });
+    }
+
+    // If email not found in either table
+    return res.status(404).json({ error: 'Email address not found in customer or hauler tables' });
+  }
+  catch (error) {
+    console.error('Error during login:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 
 // UPDATE PASSWORD endpoint
 app.post('/api/update_password', async (req, res) => {
