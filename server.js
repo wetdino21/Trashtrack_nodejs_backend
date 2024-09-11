@@ -3,6 +3,10 @@ const { Pool } = require('pg');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 
+//token
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+
 //hash
 const crypto = require('crypto');
 function hashPassword(password) {
@@ -39,6 +43,17 @@ app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 const fs = require('fs');
 const https = require('https');
+
+///
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+
+// Function to generate tokens
+const generateTokens = (user) => {
+  const accessToken = jwt.sign(user, JWT_SECRET, { expiresIn: '15m' }); // Access token expires in 15 minutes
+  const refreshToken = jwt.sign(user, JWT_REFRESH_SECRET, { expiresIn: '7d' }); // Refresh token expires in 7 days
+  return { accessToken, refreshToken };
+};
 
 // Function to generate a random, secure verification code
 function generateRandomCode() {
@@ -473,7 +488,7 @@ app.post('/api/login', async (req, res) => {
       }
 
       const storedHashedPassword = customer.cus_password;
-     
+
       // Hash the incoming password
       const hashedPassword = hashPassword(password);
 
@@ -485,7 +500,18 @@ app.post('/api/login', async (req, res) => {
         if (status == 'suspended') {
           return res.status(203).json({ message: 'Your Accoount is currently suspended' });
         }
-        return res.status(200).json({ message: 'User found in customer' });
+        
+        // store user data to token
+        const user = { email: email };
+
+        const { accessToken, refreshToken } = generateTokens(user);
+        // console.error('access: ' + accessToken);
+        // console.error('refresh: ' + refreshToken);
+        return res.status(200).json({ 
+            message: 'User found in customer',
+            accessToken: accessToken,
+            refreshToken: refreshToken
+        });
       }
       return res.status(401).json({ error: 'Incorrect password' });
     }
@@ -501,6 +527,7 @@ app.post('/api/login', async (req, res) => {
       const hauler = checkHaulerEmail.rows[0];
       const authType = hauler.haul_auth_method;
       const status = hauler.haul_status;
+      //const email = hauler.haul_email;
 
       if (authType == 'google') {
         return res.status(402).json({ message: 'Looks like this account is signed up with google. Please login with google' });
@@ -518,7 +545,19 @@ app.post('/api/login', async (req, res) => {
         if (status == 'suspended') {
           return res.status(203).json({ message: 'Your Accoount is currently suspended' });
         }
-        return res.status(201).json({ message: 'User found in hauler' });
+
+        // store user data to token
+        const user = { email: email };
+
+        const { accessToken, refreshToken } = generateTokens(user);
+        // console.error('access: ' + accessToken);
+        // console.error('refresh: ' + refreshToken);
+        return res.status(201).json({ 
+            message: 'User found in hauler',
+            accessToken: accessToken,
+            refreshToken: refreshToken
+        });
+        
       }
       return res.status(401).json({ error: 'Incorrect password' });
     }
@@ -535,7 +574,7 @@ app.post('/api/login', async (req, res) => {
 ////////////
 // LOGIN with GOOGLE
 app.post('/api/login_google', async (req, res) => {
-  const { email} = req.body;
+  const { email } = req.body;
 
   try {
     // Check if customer exists by email
