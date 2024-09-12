@@ -49,10 +49,19 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
 
 // Function to generate tokens
+// const generateTokens = (user) => {
+//   const accessToken = jwt.sign(user, JWT_SECRET, { expiresIn: '15m' }); // Access token expires in 15 minutes
+//   const refreshToken = jwt.sign(user, JWT_REFRESH_SECRET, { expiresIn: '7d' }); // Refresh token expires in 7 days
+//   return { accessToken, refreshToken };
+// };
 const generateTokens = (user) => {
-  const accessToken = jwt.sign(user, JWT_SECRET, { expiresIn: '15m' }); // Access token expires in 15 minutes
-  const refreshToken = jwt.sign(user, JWT_REFRESH_SECRET, { expiresIn: '7d' }); // Refresh token expires in 7 days
+  const accessToken = jwt.sign(user, JWT_SECRET, { expiresIn: '15m' }); // Access token expires in 10 seconds
+  const refreshToken = jwt.sign(user, JWT_REFRESH_SECRET, { expiresIn: '7d' }); // Refresh token expires in 10 seconds
   return { accessToken, refreshToken };
+};
+const generateNewAccessToken = (user) => {
+  const accessToken = jwt.sign(user, JWT_SECRET, { expiresIn: '15m' }); // Access token expires in 10 seconds
+  return { accessToken };
 };
 
 // Function to generate a random, secure verification code
@@ -104,7 +113,7 @@ const emailLimitCache = {};
 // API Endpoints
 
 // send create verification code (with check email)
-app.post('/api/send_code_createacc', async (req, res) => {
+app.post('/send_code_createacc', async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
@@ -169,7 +178,7 @@ app.post('/api/send_code_createacc', async (req, res) => {
 });
 
 // send verification code (with check email)
-app.post('/api/send_code_forgotpass', async (req, res) => {
+app.post('/send_code_forgotpass', async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
@@ -230,7 +239,7 @@ app.post('/api/send_code_forgotpass', async (req, res) => {
 });
 
 // verify the code
-app.post('/api/verify_code', async (req, res) => {
+app.post('/verify_code', async (req, res) => {
   const { email, userInputCode } = req.body;
   try {
     const result = await pool.query(
@@ -278,7 +287,7 @@ app.post('/api/verify_code', async (req, res) => {
 /////////////////////////////////////////////
 
 //FETCH ALL DATA 
-// app.post('/api/fetch_user_data', async (req, res) => {
+// app.post('/fetch_user_data', async (req, res) => {
 //   const { email } = req.body;
 //   try {
 //     // First, check in the CUSTOMER table
@@ -317,7 +326,7 @@ app.post('/api/verify_code', async (req, res) => {
 // });
 
 //FETCH ALL DATA 
-app.post('/api/fetch_user_data', async (req, res) => {
+app.post('/fetch_user_data', async (req, res) => {
   const { email } = req.body;
 
   try {
@@ -362,7 +371,7 @@ app.post('/api/fetch_user_data', async (req, res) => {
 
 
 // 1. EMAIL check existing
-app.post('/api/email_check', async (req, res) => {
+app.post('/email_check', async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
@@ -396,7 +405,7 @@ app.post('/api/email_check', async (req, res) => {
 });
 
 // EMAIL forgot pass check existing cus and haul
-app.post('/api/email_check_forgotpass', async (req, res) => {
+app.post('/email_check_forgotpass', async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
@@ -424,7 +433,7 @@ app.post('/api/email_check_forgotpass', async (req, res) => {
 });
 
 // 1. CREATE ACC (GOOGLE REGISTER)
-app.post('/api/signup_google', async (req, res) => {
+app.post('/signup_google', async (req, res) => {
   const { fname, lname, email, photo } = req.body;
   try {
 
@@ -446,7 +455,7 @@ app.post('/api/signup_google', async (req, res) => {
 });
 
 // 1. CREATE ACC (email_password)
-app.post('/api/signup', async (req, res) => {
+app.post('/signup', async (req, res) => {
   const { fname, lname, email, password } = req.body;
   try {
     // Hash the password before storing it
@@ -458,7 +467,16 @@ app.post('/api/signup', async (req, res) => {
       [fname, lname, email, hashedPassword, 'active', 'non-contractual', 'email_password']
     );
 
-    res.status(201).json(result.rows[0]);
+    // store user data to token
+    const user = { email: email };
+
+    const { accessToken, refreshToken } = generateTokens(user);
+    return res.status(201).json({
+      message: 'Created new User',
+      accessToken: accessToken,
+      refreshToken: refreshToken
+    });
+    //res.status(201).json(result.rows[0]);
   }
   catch (error) {
     console.error('Error inserting user:', error.message);//show debug print on server cmd
@@ -467,7 +485,7 @@ app.post('/api/signup', async (req, res) => {
 });
 
 // LOGIN endpoint
-app.post('/api/login', async (req, res) => {
+app.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -500,17 +518,15 @@ app.post('/api/login', async (req, res) => {
         if (status == 'suspended') {
           return res.status(203).json({ message: 'Your Accoount is currently suspended' });
         }
-        
+
         // store user data to token
         const user = { email: email };
 
         const { accessToken, refreshToken } = generateTokens(user);
-        // console.error('access: ' + accessToken);
-        // console.error('refresh: ' + refreshToken);
-        return res.status(200).json({ 
-            message: 'User found in customer',
-            accessToken: accessToken,
-            refreshToken: refreshToken
+        return res.status(200).json({
+          message: 'User found in customer',
+          accessToken: accessToken,
+          refreshToken: refreshToken
         });
       }
       return res.status(401).json({ error: 'Incorrect password' });
@@ -552,12 +568,12 @@ app.post('/api/login', async (req, res) => {
         const { accessToken, refreshToken } = generateTokens(user);
         // console.error('access: ' + accessToken);
         // console.error('refresh: ' + refreshToken);
-        return res.status(201).json({ 
-            message: 'User found in hauler',
-            accessToken: accessToken,
-            refreshToken: refreshToken
+        return res.status(201).json({
+          message: 'User found in hauler',
+          accessToken: accessToken,
+          refreshToken: refreshToken
         });
-        
+
       }
       return res.status(401).json({ error: 'Incorrect password' });
     }
@@ -571,9 +587,124 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-////////////
+////////////with Tokennn////////////////////////////////////////////////////////////////////////////////
+// Refresh Access Token
+app.post('/refresh_token', (req, res) => {
+  const { refreshToken } = req.body;
+
+  // Verify the refresh token
+  jwt.verify(refreshToken, JWT_REFRESH_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: 'Token expired or invalid' });
+    }
+    //console.log(user);
+    // Generate new access token
+    const userData = {email: user.email};
+    const {accessToken} = generateNewAccessToken(userData);
+    
+    // const newAccessToken = jwt.sign({ email: user.email }, JWT_SECRET, {
+    //   expiresIn: '5s',
+    // });
+
+    return res.status(200).json({
+      message: 'Successfully refreshed token',
+      accessToken: accessToken,
+    });
+  });
+});
+
+// Middleware to authenticate access token
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(403).json({ error: 'No access token provided' });
+
+  // Verify the access token
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({ error: 'Access token has expired' });
+      }
+      return res.status(403).json({ error: 'Invalid access token' });
+    }
+
+    req.user = user;
+    next();
+  });
+};
+
+//on Open App with token
+app.post('/onOpenApp', authenticateToken, async (req, res) => {
+  const email = req.user.email;  // Get the email from the token
+
+  try {
+    //check where user is from table
+    const checkCustomerEmail = await pool.query(
+      'SELECT * FROM CUSTOMER WHERE cus_email = $1',
+      [email]
+    );
+
+    if (checkCustomerEmail.rowCount > 0) {
+      const customer = checkCustomerEmail.rows[0];
+      if (customer.cus_status == 'active') {
+        res.status(200).json({ message: 'User is a customer' });
+      }
+    }
+
+    //check where user is from table
+    const checkHaulerEmail = await pool.query(
+      'SELECT * FROM CUSTOMER WHERE cus_email = $1',
+      [email]
+    );
+
+    if (checkHaulerEmail.rowCount > 0) {
+      const hauler = checkHaulerEmail.rows[0];
+      if (hauler.haul_status == 'active') {
+        res.status(201).json({ message: 'User is a hauler' });
+      }
+    }
+  } catch (error) {
+    console.error('Database error:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//update with token
+app.post('/update_customer', authenticateToken, async (req, res) => {
+  const { fname, lname } = req.body;
+  const email = req.user.email;  // Get the email from the token
+  if (!fname || !lname) {
+    return res.status(400).json({ error: 'First name and last name are required' });
+  }
+
+  try {
+    // Update customer details in the database
+    const result = await pool.query(
+      'UPDATE CUSTOMER SET cus_fname = $1, cus_lname = $2 WHERE cus_email = $3 RETURNING *',
+      [fname, lname, email]
+    );
+
+    if (result.rowCount > 0) {
+      res.json({ message: 'Customer details updated successfully', customer: result.rows[0] });
+    } else {
+      res.status(404).json({ error: 'Customer not found' });
+    }
+  } catch (error) {
+    console.error('Error updating customer details:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Protected route (requires access token)
+app.get('/protected', authenticateToken, (req, res) => {
+  res.json({ message: 'You have access to protected data!', user: req.user });
+});
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 // LOGIN with GOOGLE
-app.post('/api/login_google', async (req, res) => {
+app.post('/login_google', async (req, res) => {
   const { email } = req.body;
 
   try {
@@ -635,7 +766,7 @@ app.post('/api/login_google', async (req, res) => {
 });
 
 // UPDATE PASSWORD endpoint
-app.post('/api/update_password', async (req, res) => {
+app.post('/update_password', async (req, res) => {
   const { email, newPassword } = req.body;
 
   try {
@@ -707,7 +838,7 @@ const transporter = nodemailer.createTransport(smtp);
 // Endpoint to send an email
 
 //email sign up
-app.post('/api/send_email', async (req, res) => {
+app.post('/send_email', async (req, res) => {
   const { to, subject, code } = req.body;
 
   try {
@@ -745,7 +876,7 @@ app.post('/api/send_email', async (req, res) => {
 });
 
 //email forgot pass
-app.post('/api/send_email_forgotpass', async (req, res) => {
+app.post('/send_email_forgotpass', async (req, res) => {
   const { to, subject, code } = req.body;
 
   try {
