@@ -6,6 +6,8 @@ const cors = require('cors');
 //token
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
+//token google secretkey check
+//const axios = require('axios');
 
 //hash
 const crypto = require('crypto');
@@ -284,91 +286,7 @@ app.post('/verify_code', async (req, res) => {
     res.status(500).json({ error: 'Failed to verify code' });
   }
 });
-/////////////////////////////////////////////
-
-//FETCH ALL DATA 
-// app.post('/fetch_user_data', async (req, res) => {
-//   const { email } = req.body;
-//   try {
-//     // First, check in the CUSTOMER table
-//     let result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
-
-//     // If not found in CUSTOMER table, check in the HAULER table
-//     if (result.rows.length === 0) {
-//       result = await pool.query('SELECT * FROM HAULER WHERE haul_email = $1', [email]);
-//     }
-//     if(result.rows.length > 0){
-//       const user = result.rows[0];
-
-//       // Convert 'cus_profile' from bytea to base64
-//       const base64Image = user.cus_profile
-//         ? user.cus_profile.toString('base64') // Convert bytea to base64 string
-//         : null;
-
-//       // Log the base64 string
-//       console.log('Base64 Encoded Image:', base64Image);
-//     }
-
-//     // Check if any data was found
-//     if (result.rows.length > 0) {
-//       // const user = result.rows[0];
-//       // // Convert bytea data to base64 string
-//       // user.cus_profile = user.cus_profile.toString('base64');
-
-//       res.json(user);
-//     } else {
-//       res.status(404).json({ error: 'User not found' });
-//     }
-//   } catch (error) {
-//     console.error('Error fetching user data:', error.message);
-//     res.status(500).json({ error: 'Database error' });
-//   }
-// });
-
-//FETCH ALL DATA 
-app.post('/fetch_user_data', async (req, res) => {
-  const { email } = req.body;
-
-  try {
-    let result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
-
-    // If not found in CUSTOMER table, check in the HAULER table
-    if (result.rows.length === 0) {
-      result = await pool.query('SELECT * FROM HAULER WHERE haul_email = $1', [email]);
-    }
-
-    // Check if any user data was found
-    if (result.rows.length > 0) {
-      const user = result.rows[0];
-
-      // Handle profile image for both CUSTOMER and HAULER tables
-      let base64Image = null;
-      if (user.cus_profile) {
-        base64Image = user.cus_profile.toString('base64');  // If cus_profile exists
-      } else if (user.haul_profile) {
-        base64Image = user.haul_profile.toString('base64'); // If haul_profile exists
-      }
-
-      // Add the base64 image data to the response object
-      const responseData = {
-        ...user,
-        profileImage: base64Image  // Add the base64-encoded image here
-      };
-
-      // Log the base64 string (optional for debugging)
-      //console.log('Base64 Encoded Image:', base64Image);
-
-      res.json(responseData);
-    } else {
-      res.status(404).json({ error: 'User not found' });
-    }
-  } catch (error) {
-    console.error('Error fetching user data:', error.message);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
-
-
+////////////////////////////
 
 // 1. EMAIL check existing
 app.post('/email_check', async (req, res) => {
@@ -446,7 +364,20 @@ app.post('/signup_google', async (req, res) => {
       [fname, lname, email, 'active', 'non-contractual', 'google', photoBytes]
     );
 
-    res.status(201).json(result.rows[0]);
+    // Access the inserted row
+    const insertedRow = result.rows[0];
+    const id = insertedRow.cus_id;
+
+    // store user data to token
+    const user = { email: email, id: id };
+
+    const { accessToken, refreshToken } = generateTokens(user);
+    return res.status(201).json({
+      message: 'Created new User',
+      accessToken: accessToken,
+      refreshToken: refreshToken
+    });
+    //res.status(201).json(result.rows[0]);
   }
   catch (error) {
     console.error('Error inserting user:', error.message);//show debug print on server cmd
@@ -467,8 +398,12 @@ app.post('/signup', async (req, res) => {
       [fname, lname, email, hashedPassword, 'active', 'non-contractual', 'email_password']
     );
 
+    // Access the inserted row
+    const insertedRow = result.rows[0];
+    const id = insertedRow.cus_id;
+
     // store user data to token
-    const user = { email: email };
+    const user = { email: email, id: id };
 
     const { accessToken, refreshToken } = generateTokens(user);
     return res.status(201).json({
@@ -519,8 +454,11 @@ app.post('/login', async (req, res) => {
           return res.status(203).json({ message: 'Your Accoount is currently suspended' });
         }
 
+        // Access the inserted row
+        const id = customer.cus_id;
+
         // store user data to token
-        const user = { email: email };
+        const user = { email: email, id: id };
 
         const { accessToken, refreshToken } = generateTokens(user);
         return res.status(200).json({
@@ -562,8 +500,11 @@ app.post('/login', async (req, res) => {
           return res.status(203).json({ message: 'Your Accoount is currently suspended' });
         }
 
+        // Access the inserted row
+        const id = hauler.haul_id;
+
         // store user data to token
-        const user = { email: email };
+        const user = { email: email, id: id };
 
         const { accessToken, refreshToken } = generateTokens(user);
         // console.error('access: ' + accessToken);
@@ -599,9 +540,9 @@ app.post('/refresh_token', (req, res) => {
     }
     //console.log(user);
     // Generate new access token
-    const userData = {email: user.email};
-    const {accessToken} = generateNewAccessToken(userData);
-    
+    const userData = { email: user.email, id: user.id };
+    const { accessToken } = generateNewAccessToken(userData);
+
     // const newAccessToken = jwt.sign({ email: user.email }, JWT_SECRET, {
     //   expiresIn: '5s',
     // });
@@ -612,6 +553,34 @@ app.post('/refresh_token', (req, res) => {
     });
   });
 });
+
+// // Middleware to verify Google access token
+// const authenticateGoogleToken = async (req, res, next) => {
+//   const authHeader = req.headers['authorization'];
+//   const token = authHeader && authHeader.split(' ')[1];
+
+//   if (!token) {
+//     return res.status(403).json({ error: 'No access token provided' });
+//   }
+
+//   try {
+//     // Use Google's API to verify the token
+//     const response = await axios.get(`https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${token}`);
+//     const tokenInfo = response.data;
+
+//     // Check token expiration
+//     if (tokenInfo.expires_in <= 0) {
+//       return res.status(401).json({ error: 'Access token has expired' });
+//     }
+
+//     // Attach user info from the token to the request
+//     req.user = tokenInfo;
+//     next(); // Token is valid, proceed to the next middleware or route handler
+
+//   } catch (error) {
+//     return res.status(403).json({ error: 'Invalid access token' });
+//   }
+// };
 
 // Middleware to authenticate access token
 const authenticateToken = (req, res, next) => {
@@ -628,7 +597,6 @@ const authenticateToken = (req, res, next) => {
       }
       return res.status(403).json({ error: 'Invalid access token' });
     }
-
     req.user = user;
     next();
   });
@@ -637,14 +605,12 @@ const authenticateToken = (req, res, next) => {
 //on Open App with token
 app.post('/onOpenApp', authenticateToken, async (req, res) => {
   const email = req.user.email;  // Get the email from the token
-
   try {
     //check where user is from table
     const checkCustomerEmail = await pool.query(
       'SELECT * FROM CUSTOMER WHERE cus_email = $1',
       [email]
     );
-
     if (checkCustomerEmail.rowCount > 0) {
       const customer = checkCustomerEmail.rows[0];
       if (customer.cus_status == 'active') {
@@ -654,7 +620,7 @@ app.post('/onOpenApp', authenticateToken, async (req, res) => {
 
     //check where user is from table
     const checkHaulerEmail = await pool.query(
-      'SELECT * FROM CUSTOMER WHERE cus_email = $1',
+      'SELECT * FROM HAULER WHERE haul_email = $1',
       [email]
     );
 
@@ -696,10 +662,6 @@ app.post('/update_customer', authenticateToken, async (req, res) => {
   }
 });
 
-// Protected route (requires access token)
-app.get('/protected', authenticateToken, (req, res) => {
-  res.json({ message: 'You have access to protected data!', user: req.user });
-});
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -729,7 +691,18 @@ app.post('/login_google', async (req, res) => {
       if (status == 'suspended') {
         return res.status(203).json({ message: 'Your Accoount is currently suspended' });
       }
-      return res.status(200).json({ message: 'User found in customer' });
+       // Access the inserted row
+       const id = customer.cus_id;
+
+       // store user data to token
+       const user = { email: email, id: id };
+      const { accessToken, refreshToken } = generateTokens(user);
+      return res.status(200).json({
+        message: 'Successful google customer login',
+        accessToken: accessToken,
+        refreshToken: refreshToken
+      });
+      //return res.status(200).json({ message: 'User found in customer' });
     }
 
     // Check if hauler exists by email
@@ -753,7 +726,20 @@ app.post('/login_google', async (req, res) => {
       if (status == 'suspended') {
         return res.status(203).json({ message: 'Your Accoount is currently suspended' });
       }
-      return res.status(201).json({ message: 'User found in hauler' });
+       // Access the inserted row
+       const id = hauler.haul_id;
+
+       // store user data to token
+       const user = { email: email, id: id };
+
+      const { accessToken, refreshToken } = generateTokens(user);
+      console.log(accessToken + '' + refreshToken);
+      return res.status(201).json({
+        message: 'Successful google hauler login',
+        accessToken: accessToken,
+        refreshToken: refreshToken
+      });
+      //return res.status(201).json({ message: 'User found in hauler' });
     }
 
     // If email not found in either table
@@ -918,6 +904,66 @@ app.post('/send_email_forgotpass', async (req, res) => {
 ///EMAIL
 
 
+///////////CUSTOMER DATA ////////////////////////////////////////////////////////
+//FETCH ALL DATA 
+app.post('/customer/fetch_data', authenticateToken, async (req, res) => {
+  const email = req.user.email;  
+
+  try {
+    let result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
+
+    // If not found in CUSTOMER table, check in the HAULER table
+    if (result.rows.length === 0) {
+      result = await pool.query('SELECT * FROM HAULER WHERE haul_email = $1', [email]);
+    }
+
+    // Check if any user data was found
+    if (result.rows.length > 0) {
+      const user = result.rows[0];
+
+      // Handle profile image for both CUSTOMER and HAULER tables
+      let base64Image = null;
+      if (user.cus_profile) {
+        base64Image = user.cus_profile.toString('base64');  // If cus_profile exists
+      } else if (user.haul_profile) {
+        base64Image = user.haul_profile.toString('base64'); // If haul_profile exists
+      }
+
+      // Add the base64 image data to the response object
+      const responseData = {
+        ...user,
+        profileImage: base64Image  // Add the base64-encoded image here
+      };
+
+      // Log the base64 string (optional for debugging)
+      //console.log('Base64 Encoded Image:', base64Image);
+
+      res.json(responseData);
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching user data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//notification
+app.post('/customer/fetch_notifications', authenticateToken, async (req, res) => {
+  const userId = req.user.id;  // Assuming the user ID is stored in the token
+  try {
+    const result = await pool.query('SELECT * FROM notification WHERE cus_id = $1 ORDER BY notif_created_at DESC', [userId]);
+
+    if (result.rows.length > 0) {
+      res.json(result.rows);
+    } else {
+      res.status(404).json({ error: 'No notifications found' });
+    }
+  } catch (error) {
+    console.error('Error fetching notifications:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 
 
 
