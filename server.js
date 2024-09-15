@@ -109,7 +109,7 @@ async function sendCodeForgotPassEmail(to, code) {
 }
 // Rate limiting
 const MAX_ATTEMPTS = 5;
-const RATE_LIMIT = 1 * 60 * 1000; // 1 minutes
+const RATE_LIMIT = 0.3 * 60 * 1000; // 1 minutes
 const emailLimitCache = {};
 
 // API Endpoints
@@ -139,9 +139,9 @@ app.post('/send_code_createacc', async (req, res) => {
   }
 
   if (emailLimitCache[email] && Date.now() - emailLimitCache[email] < RATE_LIMIT) {
-    console.error('Too many requests. Please try again later.'); // check code in CMD
+    //console.error('Too many requests. Please try again later.'); // check code in CMD
 
-    const timeremain = (60000 - (emailLimitCache[email] && Date.now() - emailLimitCache[email]));
+    const timeremain = (30000 - (emailLimitCache[email] && Date.now() - emailLimitCache[email]));
     return res.status(429).json({ error: 'Too many requests. Please try again later.', timeremain: timeremain });// Pass remaining time
   }
 
@@ -322,6 +322,40 @@ app.post('/email_check', async (req, res) => {
   }
 });
 
+// check contact existing
+app.post('/contact_check', async (req, res) => {
+  const { contact } = req.body;
+
+  if (!contact) {
+    return res.status(400).json({ error: 'Contact is required' });
+  }
+
+  try {
+    const checkEmail = await pool.query(`
+      SELECT 'customer' AS table_name FROM customer WHERE cus_contact = $1
+      UNION ALL
+      SELECT 'hauler' AS table_name FROM hauler WHERE haul_contact = $1
+      UNION ALL
+      SELECT 'operational_dispatcher' AS table_name FROM operational_dispatcher WHERE op_contact = $1
+      UNION ALL
+      SELECT 'billing_officer' AS table_name FROM billing_officer WHERE bo_contact = $1
+      UNION ALL
+      SELECT 'account_manager' AS table_name FROM account_manager WHERE acc_contact = $1
+    `, [contact]);
+
+    if (checkEmail.rows.length > 0) {
+      return res.status(400).json({ error: 'Contact number already exists', table: checkEmail.rows[0].table_name });
+    }
+
+    // Email does not exist in any table
+    return res.status(200).json({ message: 'Contact number is available' });
+
+  } catch (error) {
+    console.error('Error checking Contact number:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // EMAIL forgot pass check existing cus and haul
 app.post('/email_check_forgotpass', async (req, res) => {
   const { email } = req.body;
@@ -387,22 +421,30 @@ app.post('/signup_google', async (req, res) => {
 
 // 1. CREATE ACC (email_password)
 app.post('/signup', async (req, res) => {
-  const { fname, lname, email, password } = req.body;
+  const {
+    fname, mname, lname, email, password,
+    contact, province, city, brgy, street, postal
+  } = req.body;
+
   try {
     // Hash the password before storing it
     const hashedPassword = hashPassword(password);
 
-    // Insert the new customer into the CUSTOMER table with hashed password
+    // Insert the new customer into the CUSTOMER table
     const result = await pool.query(
-      'INSERT INTO CUSTOMER (cus_fname, cus_lname, cus_email, cus_password, cus_status, cus_type, cus_auth_method) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [fname, lname, email, hashedPassword, 'active', 'non-contractual', 'email_password']
+      'INSERT INTO CUSTOMER (cus_fname, cus_mname, cus_lname, cus_email, cus_password, cus_contact, cus_province, cus_city, cus_brgy, cus_street, cus_postal, cus_status, cus_type, cus_auth_method) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *',
+      [
+        fname, mname, lname, email, hashedPassword, 
+        contact, province, city, brgy, street, postal,
+        'active', 'non-contractual', 'email_password'
+      ]
     );
 
     // Access the inserted row
     const insertedRow = result.rows[0];
     const id = insertedRow.cus_id;
 
-    // store user data to token
+    // Store user data in token
     const user = { email: email, id: id };
 
     const { accessToken, refreshToken } = generateTokens(user);
@@ -411,13 +453,13 @@ app.post('/signup', async (req, res) => {
       accessToken: accessToken,
       refreshToken: refreshToken
     });
-    //res.status(201).json(result.rows[0]);
   }
   catch (error) {
-    console.error('Error inserting user:', error.message);//show debug print on server cmd
+    console.error('Error inserting user:', error.message);
     res.status(500).json({ error: 'Database error' });
   }
 });
+
 
 // LOGIN endpoint
 app.post('/login', async (req, res) => {
