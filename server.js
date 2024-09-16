@@ -386,16 +386,35 @@ app.post('/email_check_forgotpass', async (req, res) => {
 
 // 1. CREATE ACC (GOOGLE REGISTER)
 app.post('/signup_google', async (req, res) => {
-  const { fname, lname, email, photo } = req.body;
+  const { fname, mname, lname, email, photo, contact, province, city, brgy, street, postal } = req.body;
   try {
 
     // Convert base64 string back to bytea
     const photoBytes = photo ? Buffer.from(photo, 'base64') : null;
 
-    // Insert the new customer into the CUSTOMER table with hashed password
+    // Convert base64 string back to bytea
     const result = await pool.query(
-      'INSERT INTO CUSTOMER (cus_fname, cus_lname, cus_email, cus_status, cus_type, cus_auth_method, cus_profile) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [fname, lname, email, 'active', 'non-contractual', 'google', photoBytes]
+      `INSERT INTO CUSTOMER (
+        cus_fname, cus_mname, cus_lname, cus_email, cus_status, 
+        cus_type, cus_auth_method, cus_profile, cus_contact, 
+        cus_province, cus_city, cus_brgy, cus_street, cus_postal
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+      [
+        fname,
+        mname,
+        lname,
+        email,
+        'active',                 // cus_status
+        'non-contractual',         // cus_type
+        'google',                  // cus_auth_method
+        photoBytes,                // cus_profile (converted base64 image)
+        contact,
+        province,
+        city,
+        brgy,
+        street,
+        postal
+      ]
     );
 
     // Access the inserted row
@@ -434,7 +453,7 @@ app.post('/signup', async (req, res) => {
     const result = await pool.query(
       'INSERT INTO CUSTOMER (cus_fname, cus_mname, cus_lname, cus_email, cus_password, cus_contact, cus_province, cus_city, cus_brgy, cus_street, cus_postal, cus_status, cus_type, cus_auth_method) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *',
       [
-        fname, mname, lname, email, hashedPassword, 
+        fname, mname, lname, email, hashedPassword,
         contact, province, city, brgy, street, postal,
         'active', 'non-contractual', 'email_password'
       ]
@@ -733,11 +752,11 @@ app.post('/login_google', async (req, res) => {
       if (status == 'suspended') {
         return res.status(203).json({ message: 'Your Accoount is currently suspended' });
       }
-       // Access the inserted row
-       const id = customer.cus_id;
+      // Access the inserted row
+      const id = customer.cus_id;
 
-       // store user data to token
-       const user = { email: email, id: id };
+      // store user data to token
+      const user = { email: email, id: id };
       const { accessToken, refreshToken } = generateTokens(user);
       return res.status(200).json({
         message: 'Successful google customer login',
@@ -768,11 +787,11 @@ app.post('/login_google', async (req, res) => {
       if (status == 'suspended') {
         return res.status(203).json({ message: 'Your Accoount is currently suspended' });
       }
-       // Access the inserted row
-       const id = hauler.haul_id;
+      // Access the inserted row
+      const id = hauler.haul_id;
 
-       // store user data to token
-       const user = { email: email, id: id };
+      // store user data to token
+      const user = { email: email, id: id };
 
       const { accessToken, refreshToken } = generateTokens(user);
       console.log(accessToken + '' + refreshToken);
@@ -949,7 +968,7 @@ app.post('/send_email_forgotpass', async (req, res) => {
 ///////////CUSTOMER DATA ////////////////////////////////////////////////////////
 //FETCH ALL DATA 
 app.post('/customer/fetch_data', authenticateToken, async (req, res) => {
-  const email = req.user.email;  
+  const email = req.user.email;
 
   try {
     let result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
@@ -982,6 +1001,48 @@ app.post('/customer/fetch_data', authenticateToken, async (req, res) => {
 
       res.json(responseData);
     } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching user data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.post('/customer/fetch_profile', authenticateToken, async (req, res) => {
+  const email = req.user.email;
+
+  try {
+    let result = await pool.query('SELECT cus_profile FROM CUSTOMER WHERE cus_email = $1', [email]);
+
+    // If not found in CUSTOMER table, check in the HAULER table
+    if (result.rows.length === 0) {
+      result = await pool.query('SELECT haul_profile FROM HAULER WHERE haul_email = $1', [email]);
+    }
+
+    // Check if any user data was found
+    if (result.rows.length > 0) {
+      const user = result.rows[0];
+
+      // Handle profile image for both CUSTOMER and HAULER tables
+      let base64Image = null;
+      if (user.cus_profile) {
+        base64Image = user.cus_profile.toString('base64');  // If cus_profile exists
+      } else if (user.haul_profile) {
+        base64Image = user.haul_profile.toString('base64'); // If haul_profile exists
+      }
+
+      // Add the base64 image data to the response object
+      const responseData = {
+        profileImage: base64Image  // Add the base64-encoded image here
+      };
+
+      // Log the base64 string (optional for debugging)
+      //console.log('Base64 Encoded Image:', base64Image);
+
+      res.json(responseData);
+    } else {
+      console.error('User not found');
       res.status(404).json({ error: 'User not found' });
     }
   } catch (error) {
