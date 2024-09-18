@@ -1068,6 +1068,18 @@ app.post('/customer/fetch_notifications', authenticateToken, async (req, res) =>
   }
 });
 
+//waste category
+app.get('/waste_category', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT wc_name FROM waste_category WHERE wc_status = $1', ['active']);
+    console.log(result.rows);
+    res.json(result.rows);
+   
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
 
 
 
