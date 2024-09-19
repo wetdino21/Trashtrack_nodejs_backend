@@ -7,7 +7,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 //token google secretkey check
-//const axios = require('axios');
+const axios = require('axios');
 
 //hash
 const crypto = require('crypto');
@@ -1072,7 +1072,6 @@ app.post('/customer/fetch_notifications', authenticateToken, async (req, res) =>
 app.get('/waste_category', async (req, res) => {
   try {
     const result = await pool.query('SELECT wc_name FROM waste_category WHERE wc_status = $1', ['active']);
-    console.log(result.rows);
     res.json(result.rows);
    
   } catch (err) {
@@ -1081,6 +1080,204 @@ app.get('/waste_category', async (req, res) => {
   }
 });
 
+
+//////PAYMENT////////////////////////////////////////////////////////////////////////////
+// const PAYMONGO_SECRET_KEY = 'sk_test_SEQdG3bnMZroCCEVDm216X2Q'; // Replace with your actual key
+// const encodedSecretKey = Buffer.from(PAYMONGO_SECRET_KEY).toString('base64');
+
+// // Route to create a PayMongo payment link
+// app.post('/payment_link', authenticateToken, async (req, res) => {
+//   const { amount } = req.body;  // The amount in centavos
+//   const { email } = req.user;   // Email from the decoded token
+
+//   try {
+//     // Create the payment link using PayMongo's API
+//     const response = await axios.post(
+//       'https://api.paymongo.com/v1/links',
+//       {
+//         data: {
+//           attributes: {
+//             amount: amount,
+//             description: `Payment from ${email}`,
+//             checkout_url: null,
+//             payment_method_types: ['card', 'gcash'],
+//             currency: 'PHP',
+//           },
+//         },
+//       },
+//       {
+//         headers: {
+//           Authorization: `Basic ${encodedSecretKey}`,
+//           'Content-Type': 'application/json',
+//         },
+//       }
+//     );
+
+//     const paymentLink = response.data.data;
+
+//     // Check if the paymentLink contains the checkout URL
+//     const checkoutUrl = paymentLink.attributes.checkout_url;
+
+//     // If checkout URL exists, return it
+//     if (checkoutUrl) {
+//       res.json({
+//         checkoutUrl: checkoutUrl,
+//       });
+//     } else {
+//       throw new Error('Checkout URL not available');
+//     }
+//   } catch (error) {
+//     console.error('Error creating payment link:', error.message || error);
+//     res.status(500).json({ error: 'Failed to create payment link' });
+//   }
+// });
+
+
+
+const PAYMONGO_SECRET_KEY = 'sk_test_SEQdG3bnMZroCCEVDm216X2Q'; // Replace with your actual key
+const encodedSecretKey = Buffer.from(PAYMONGO_SECRET_KEY).toString('base64');
+
+// Route to create a PayMongo payment link
+app.post('/payment_link', authenticateToken, async (req, res) => {
+  const { amount } = req.body;  // The amount in centavos
+  const { email } = req.user;   // Email from the decoded token
+
+  try {
+    // Create the payment link using PayMongo's API
+    const response = await axios.post(
+      'https://api.paymongo.com/v1/links',
+      {
+        data: {
+          attributes: {
+            amount: amount,
+            description: `Payment from ${email}`,
+            checkout_url: null,
+            payment_method_types: ['card', 'gcash'],
+            currency: 'PHP',
+          },
+        },
+      },
+      {
+        headers: {
+          Authorization: `Basic ${encodedSecretKey}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const paymentLink = response.data.data;
+
+    // Check if the paymentLink contains the checkout URL
+    const checkoutUrl = paymentLink.attributes.checkout_url;
+
+    // If checkout URL exists, return it
+    if (checkoutUrl) {
+      res.json({
+        checkoutUrl: checkoutUrl,
+      });
+    } else {
+      throw new Error('Checkout URL not available');
+    }
+  } catch (error) {
+    console.error('Error creating payment link:', error.message || error);
+    res.status(500).json({ error: 'Failed to create payment link' });
+  }
+});
+
+
+///////link2
+app.post('/payment_intent', authenticateToken, async (req, res) => {
+  const { amount } = req.body;
+  const { email } = req.user;
+
+  try {
+    const paymentIntentResponse = await axios.post(
+      'https://api.paymongo.com/v1/payment_intents',
+      {
+        data: {
+          attributes: {
+            amount: amount,
+            payment_method_allowed: ['gcash', 'card'],  // You can allow more methods
+            currency: 'PHP',
+            capture_type: 'automatic',
+            description: `Payment from ${email}`,
+          },
+        },
+      },
+      {
+        headers: {
+          Authorization: `Basic ${encodedSecretKey}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const paymentIntent = paymentIntentResponse.data.data;
+
+    // Proceed to create a source for GCash payment
+    const paymentSourceResponse = await axios.post(
+      'https://api.paymongo.com/v1/sources',
+      {
+        data: {
+          attributes: {
+            amount: amount,
+            redirect: {
+              success: 'https://yourwebsite.com/success',
+              failed: 'https://yourwebsite.com/failure',
+            },
+            type: 'gcash',  // GCash is the type here, you can use card for card payments
+            currency: 'PHP',
+          },
+        },
+      },
+      {
+        headers: {
+          Authorization: `Basic ${encodedSecretKey}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const paymentSource = paymentSourceResponse.data.data;
+    const checkoutUrl = paymentSource.attributes.redirect.checkout_url;
+
+    res.json({
+      checkoutUrl: checkoutUrl,
+    });
+  } catch (error) {
+    console.error('Error creating payment intent or source:', error.message || error);
+    res.status(500).json({ error: 'Failed to create payment intent or source' });
+  }
+});
+
+
+
+
+
+///status
+app.get('/payment_status/:paymentId', authenticateToken, async (req, res) => {
+  const { paymentId } = req.params;
+ 
+  
+  try {
+    const response = await axios.get(
+      `https://api.paymongo.com/v1/payments/${paymentId}`,
+      {
+        headers: {
+          Authorization: `Basic ${encodedSecretKey}`,
+        },
+      }
+    );
+    
+    const paymentStatus = response.data.data.attributes.status;
+    console.log(paymentStatus);
+    res.json({ status: paymentStatus });
+
+  } catch (error) {
+    console.error('Error fetching payment status:', error.message || error);
+    res.status(500).json({ error: 'Failed to fetch payment status' });
+  }
+});
 
 
 
