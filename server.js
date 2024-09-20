@@ -1073,7 +1073,7 @@ app.get('/waste_category', async (req, res) => {
   try {
     const result = await pool.query('SELECT wc_name FROM waste_category WHERE wc_status = $1', ['active']);
     res.json(result.rows);
-   
+
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
@@ -1134,7 +1134,12 @@ app.get('/waste_category', async (req, res) => {
 
 
 
-const PAYMONGO_SECRET_KEY = 'sk_test_SEQdG3bnMZroCCEVDm216X2Q'; // Replace with your actual key
+//const PAYMONGO_SECRET_KEY = 'sk_test_B3AhBpzntGs1eYhNKBWo1hSw'; // Replace with your actual key
+const PAYMONGO_SECRET_KEY = process.env.PAYMONGO_SECRET;
+
+if (!PAYMONGO_SECRET_KEY) {
+  throw new Error('PayMongo secret key is not defined');
+}
 const encodedSecretKey = Buffer.from(PAYMONGO_SECRET_KEY).toString('base64');
 
 // Route to create a PayMongo payment link
@@ -1186,69 +1191,156 @@ app.post('/payment_link', authenticateToken, async (req, res) => {
 
 
 ///////link2
-app.post('/payment_intent', authenticateToken, async (req, res) => {
-  const { amount } = req.body;
-  const { email } = req.user;
+app.post('/payment_link2', authenticateToken, async (req, res) => {
+  const { amount } = req.body;  // The amount in centavos
+  const { email } = req.user;   // Email from the decoded token
+
+  if (!amount || amount <= 0) {
+    return res.status(400).json({ error: 'Invalid amount' });
+  }
 
   try {
-    const paymentIntentResponse = await axios.post(
-      'https://api.paymongo.com/v1/payment_intents',
-      {
-        data: {
-          attributes: {
-            amount: amount,
-            payment_method_allowed: ['gcash', 'card'],  // You can allow more methods
-            currency: 'PHP',
-            capture_type: 'automatic',
-            description: `Payment from ${email}`,
-          },
-        },
-      },
-      {
-        headers: {
-          Authorization: `Basic ${encodedSecretKey}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    const result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
 
-    const paymentIntent = paymentIntentResponse.data.data;
+    if (result.rows.length > 0) {
+      const user = result.rows[0];
+      const name = `${user.cus_fname} ${user.cus_mname || ''} ${user.cus_lname}`.trim();
+      const phone = user.cus_contact;
 
-    // Proceed to create a source for GCash payment
-    const paymentSourceResponse = await axios.post(
-      'https://api.paymongo.com/v1/sources',
-      {
-        data: {
-          attributes: {
-            amount: amount,
-            redirect: {
-              success: 'https://yourwebsite.com/success',
-              failed: 'https://yourwebsite.com/failure',
+      const response = await axios.post(
+        'https://api.paymongo.com/v1/checkout_sessions',
+        {
+          data: {
+            attributes: {
+              amount: amount * 100,
+              currency: 'PHP',
+              description: 'Payment for your transaction',
+              billing: {
+                name,
+                email,
+                phone,
+              },
+              line_items: [
+                {
+                  name: 'Food Waste',
+                  amount: 100 * 100,
+                  currency: 'PHP',
+                  description: 'Payment for service',
+                  quantity: 1,
+                },
+              ],
+              payment_method_types: ['gcash', 'card', 'paymaya', 'grab_pay'],
+              success_url: 'https://trashtrack.com/success',
+              cancel_url: 'https://trashtrack.com/cancel',
             },
-            type: 'gcash',  // GCash is the type here, you can use card for card payments
-            currency: 'PHP',
           },
         },
-      },
-      {
-        headers: {
-          Authorization: `Basic ${encodedSecretKey}`,
-          'Content-Type': 'application/json',
-        },
+        {
+          headers: {
+            Authorization: `Basic ${encodedSecretKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+       const checkoutUrl = response.data.data.attributes.checkout_url;
+
+      // const checkoutSession = response.data.data;
+      // const sessionId = checkoutSession.id;  // Checkout session ID
+      // const transactionId = checkoutSession.attributes.transaction_id; // If available
+
+      const checkoutSession = response.data.data;
+      const sessionId = checkoutSession.id;  // Checkout session ID
+      // const paymentId = checkoutSession.payments.id; // Payment ID
+      // const paymentStatus = checkoutSession.payments.attributes.status; // Payment status
+
+      console.log(sessionId);
+      // console.log(paymentId);
+      // console.log(paymentStatus);
+      console.log(checkoutUrl);
+      if (checkoutUrl) {
+        res.json({ checkoutUrl });
+      } else {
+        throw new Error('Checkout URL not available');
       }
-    );
-
-    const paymentSource = paymentSourceResponse.data.data;
-    const checkoutUrl = paymentSource.attributes.redirect.checkout_url;
-
-    res.json({
-      checkoutUrl: checkoutUrl,
-    });
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
   } catch (error) {
-    console.error('Error creating payment intent or source:', error.message || error);
-    res.status(500).json({ error: 'Failed to create payment intent or source' });
+    console.error('Error creating checkout session:', error.message || error);
+    res.status(500).json({ error: error.message || 'Failed to create checkout session' });
   }
 });
+
+
+// // Route to create a PayMongo checkout session
+// app.post('/payment_link2', authenticateToken, async (req, res) => {
+//   const { amount } = req.body;  // The amount in centavos
+//   const { email } = req.user;   // Email from the decoded token
+
+//   console.log(amount, email);
+//   try {
+//     // Create the checkout session using PayMongo's API
+//     const response = await axios.post(
+//       'https://api.paymongo.com/v1/checkout_sessions',
+//       {
+//         data: {
+//           attributes: {
+//             amount: amount * 100, // Amount in centavos
+//             currency: 'PHP',
+//             description: `Payment for`,
+//             billing: {
+//               name: 'mike',
+//               email: email,
+//               phone: '092323223',
+//             },
+//             line_items: [
+//               {
+//                 name: 'mikesadsda',
+//                 amount: 100 * 100, // Price in centavos
+//                 currency: 'PHP',
+//                 description: 'mikeadsasdasdadas',
+//                 quantity: 1,
+//               },
+//             ],
+//             payment_method_types: ['gcash', 'card', 'paymaya', 'grab_pay'],
+//             // success_url: 'trashtrack://success', // Redirect to your app on success
+//             // cancel_url: 'trashtrack://cancel',   // Redirect to your app on cancel
+//             // success_url: 'https://example.com/success', // Redirect to your app on success
+//             // cancel_url: 'https://example.com/cancel',   // Redirect to your app on cancel
+//             success_url: 'https://trashtrack.com/success', // Redirect to your app on success
+//             cancel_url: 'https://trashtrack.com/cancel', // Redirect to your app on cancel
+
+//           },
+//         },
+//       },
+//       {
+//         headers: {
+//           Authorization: `Basic ${encodedSecretKey}`,
+//           'Content-Type': 'application/json',
+//         },
+//       }
+//     );
+
+//     const checkoutSession = response.data.data;
+
+//     // Check if the checkoutSession contains the checkout URL
+//     const checkoutUrl = checkoutSession.attributes.checkout_url;
+//     console.log(checkoutUrl);
+//     // If checkout URL exists, return it
+//     if (checkoutUrl) {
+//       res.json({
+//         checkoutUrl: checkoutUrl,
+//       });
+//     } else {
+//       throw new Error('Checkout URL not available');
+//     }
+//   } catch (error) {
+//     console.error('Error creating checkout session:', error.message || error);
+//     res.status(500).json({ error: 'Failed to create checkout session' });
+//   }
+// });
+
 
 
 
@@ -1257,8 +1349,8 @@ app.post('/payment_intent', authenticateToken, async (req, res) => {
 ///status
 app.get('/payment_status/:paymentId', authenticateToken, async (req, res) => {
   const { paymentId } = req.params;
- 
-  
+
+
   try {
     const response = await axios.get(
       `https://api.paymongo.com/v1/payments/${paymentId}`,
@@ -1268,7 +1360,7 @@ app.get('/payment_status/:paymentId', authenticateToken, async (req, res) => {
         },
       }
     );
-    
+
     const paymentStatus = response.data.data.attributes.status;
     console.log(paymentStatus);
     res.json({ status: paymentStatus });
