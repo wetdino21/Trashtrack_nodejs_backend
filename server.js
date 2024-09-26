@@ -1071,9 +1071,8 @@ app.post('/customer/fetch_notifications', authenticateToken, async (req, res) =>
 //waste category
 app.get('/waste_category', async (req, res) => {
   try {
-    const result = await pool.query('SELECT wc_name FROM waste_category WHERE wc_status = $1', ['active']);
+    const result = await pool.query('SELECT * FROM waste_category WHERE wc_status = $1', ['active']);
     res.json(result.rows);
-
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
@@ -1383,3 +1382,4 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on http://192.168.254.187:${port}`);
 });
 
+//http://192.168.119.156
