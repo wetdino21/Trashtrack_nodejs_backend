@@ -1079,6 +1079,116 @@ app.get('/waste_category', async (req, res) => {
   }
 });
 
+// booking
+app.post('/booking', authenticateToken, async (req, res) => {
+  const id = req.user.id;
+
+  const {
+    date,
+    province,
+    city,
+    brgy,
+    street,
+    postal,
+    latitude,
+    longitude,
+    wasteTypes  // list
+  } = req.body;
+
+  try {
+    const query = `
+      INSERT INTO booking (bk_date, bk_province, bk_city, bk_brgy, bk_street, bk_postal, bk_latitude, bk_longitude, cus_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING bk_id;  -- Return the id of the newly inserted booking
+    `;
+
+    const result = await pool.query(query, [
+      date,
+      province,
+      city,
+      brgy,
+      street,
+      postal,
+      latitude,
+      longitude,
+      id
+    ]);
+
+    if (result.rows.length > 0) {
+      const bookingId = result.rows[0].bk_id;
+
+      // Insert multiple waste types into booking_waste
+      if (wasteTypes && wasteTypes.length > 0) {
+        const insertWasteQuery = `
+          INSERT INTO booking_waste (bw_name, bw_unit, bw_price, bk_id)
+          VALUES ($1, $2, $3, $4)
+        `;
+
+        // Use a transaction to insert waste types
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+
+          for (const wasteType of wasteTypes) {
+            await client.query(insertWasteQuery, [wasteType.name, wasteType.unit, wasteType.price, bookingId]);
+          }
+
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK');
+          console.error('Error inserting waste types:', error.message);
+          return res.status(500).json({ error: 'Failed to insert waste types' });
+        } finally {
+          client.release();
+        }
+      }
+
+      // Respond with the newly created booking ID
+      res.status(200).json({ bookingId });
+    } else {
+      console.error('Booking insertion failed');
+      res.status(400).json({ error: 'Booking insertion failed' });
+    }
+  } catch (error) {
+    console.error('Error inserting booking:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//fetch booking data
+app.post('/fetch_booking', authenticateToken, async (req, res) => {
+  const userId = req.user.id;  // Assuming the user ID is stored in the token
+  try {
+    const result = await pool.query(
+      'SELECT * FROM booking WHERE cus_id = $1 AND bk_status != \'Collected\' OR bk_status != \'Cancelled\' ORDER BY bk_date ASC',
+      [userId]
+    );
+
+    if (result.rows.length > 0) {
+      // Extract all booking IDs (bk_id) for the user
+      const bookingIds = result.rows.map(booking => booking.bk_id);
+
+      // Fetch the booking waste for the user's booking IDs
+      const result2 = await pool.query(
+        'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
+        [bookingIds]
+      );
+
+      // Combine booking data and waste data into one response object
+      res.status(200).json({
+        booking: result.rows,
+        wasteTypes: result2.rows
+      });
+    } else {
+      res.status(404).json({ error: 'No bookings found' });
+    }
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
 
 //////PAYMENT////////////////////////////////////////////////////////////////////////////
 // const PAYMONGO_SECRET_KEY = 'sk_test_SEQdG3bnMZroCCEVDm216X2Q'; // Replace with your actual key
@@ -1242,7 +1352,7 @@ app.post('/payment_link2', authenticateToken, async (req, res) => {
         }
       );
 
-       const checkoutUrl = response.data.data.attributes.checkout_url;
+      const checkoutUrl = response.data.data.attributes.checkout_url;
 
       // const checkoutSession = response.data.data;
       // const sessionId = checkoutSession.id;  // Checkout session ID
