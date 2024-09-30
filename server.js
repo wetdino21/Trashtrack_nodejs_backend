@@ -1160,7 +1160,7 @@ app.post('/fetch_booking', authenticateToken, async (req, res) => {
   const userId = req.user.id;  // Assuming the user ID is stored in the token
   try {
     const result = await pool.query(
-      'SELECT * FROM booking WHERE cus_id = $1 AND bk_status != \'Collected\' OR bk_status != \'Cancelled\' ORDER BY bk_date ASC',
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE cus_id = $1 ORDER BY bk_date ASC',
       [userId]
     );
 
@@ -1173,11 +1173,11 @@ app.post('/fetch_booking', authenticateToken, async (req, res) => {
         'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
         [bookingIds]
       );
-
       // Combine booking data and waste data into one response object
       res.status(200).json({
         booking: result.rows,
         wasteTypes: result2.rows
+        
       });
     } else {
       res.status(404).json({ error: 'No bookings found' });
@@ -1188,6 +1188,125 @@ app.post('/fetch_booking', authenticateToken, async (req, res) => {
   }
 });
 
+//update booking
+app.post('/booking_update', authenticateToken, async (req, res) => {
+  const id = req.user.id;
+
+  const {
+    bookingId,  // Pass this in the request to update an existing booking
+    date,
+    province,
+    city,
+    brgy,
+    street,
+    postal,
+    latitude,
+    longitude,
+    wasteTypes  // List of new waste types
+  } = req.body;
+
+  try {
+    const client = await pool.connect();
+
+    try {
+      // Start a transaction
+      await client.query('BEGIN');
+
+      // Step 1: Update the booking details
+      const updateBookingQuery = `
+        UPDATE booking 
+        SET bk_date = $1, bk_province = $2, bk_city = $3, bk_brgy = $4, bk_street = $5, bk_postal = $6, bk_latitude = $7, bk_longitude = $8 
+        WHERE bk_id = $9 AND cus_id = $10
+        RETURNING bk_id;
+      `;
+
+      const result = await client.query(updateBookingQuery, [
+        date,
+        province,
+        city,
+        brgy,
+        street,
+        postal,
+        latitude,
+        longitude,
+        bookingId,
+        id  // Check that the booking belongs to the authenticated user
+      ]);
+
+      if (result.rows.length === 0) {
+        throw new Error('Booking update failed or booking not found');
+      }
+
+      // Step 2: Delete old booking_waste entries based on bk_id
+      const deleteWasteQuery = `
+        DELETE FROM booking_waste WHERE bk_id = $1;
+      `;
+      await client.query(deleteWasteQuery, [bookingId]);
+
+      // Step 3: Insert new booking_waste entries
+      if (wasteTypes && wasteTypes.length > 0) {
+        const insertWasteQuery = `
+          INSERT INTO booking_waste (bw_name, bw_unit, bw_price, bk_id)
+          VALUES ($1, $2, $3, $4);
+        `;
+
+        for (const wasteType of wasteTypes) {
+          await client.query(insertWasteQuery, [
+            wasteType.name,
+            wasteType.unit,
+            wasteType.price,
+            bookingId
+          ]);
+        }
+      }
+
+      // Commit the transaction
+      await client.query('COMMIT');
+
+      // Respond with the updated booking ID
+      res.status(200).json({ bookingId });
+    } catch (error) {
+      // Rollback the transaction in case of an error
+      await client.query('ROLLBACK');
+      console.error('Error updating booking:', error.message);
+      res.status(500).json({ error: 'Failed to update booking' });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Database connection error:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//cancel booking
+app.post('/booking_cancel', authenticateToken, async (req, res) => {
+  const id = req.user.id;
+
+  const {
+    bookingId,  // Pass this in the request to update an existing booking
+  } = req.body;
+
+  try {
+    const query = 
+    'UPDATE booking SET bk_status = \'Cancelled\' WHERE cus_id = $1 AND bk_id = $2 RETURNING *';
+
+    const result = await pool.query(query, [
+      id,
+      bookingId
+    ]);
+
+    if (result.rows.length > 0) {
+      res.status(200).json({ bookingId });
+    } else {
+      console.error('Booking insertion failed');
+      res.status(400).json({ error: 'Booking cancellation failed' });
+    }
+  } catch (error) {
+    console.error('Error booking cancellation:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 
 
 //////PAYMENT////////////////////////////////////////////////////////////////////////////
