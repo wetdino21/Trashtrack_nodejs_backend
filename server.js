@@ -125,13 +125,7 @@ app.post('/send_code_createacc', async (req, res) => {
   const checkEmail = await pool.query(`
     SELECT 'customer' AS table_name FROM customer WHERE cus_email = $1
     UNION ALL
-    SELECT 'hauler' AS table_name FROM hauler WHERE haul_email = $1
-    UNION ALL
-    SELECT 'operational_dispatcher' AS table_name FROM operational_dispatcher WHERE op_email = $1
-    UNION ALL
-    SELECT 'billing_officer' AS table_name FROM billing_officer WHERE bo_email = $1
-    UNION ALL
-    SELECT 'account_manager' AS table_name FROM account_manager WHERE acc_email = $1
+    SELECT 'employee' AS table_name FROM employee WHERE emp_email = $1
   `, [email]);
 
   if (checkEmail.rows.length > 0) {
@@ -190,7 +184,7 @@ app.post('/send_code_forgotpass', async (req, res) => {
   const checkEmail = await pool.query(`
     SELECT 'customer' AS table_name FROM customer WHERE cus_email = $1
     UNION ALL
-    SELECT 'hauler' AS table_name FROM hauler WHERE haul_email = $1
+    SELECT 'employee' AS table_name FROM employee WHERE emp_email = $1
   `, [email]);
 
   if (checkEmail.rows.length === 0) {
@@ -300,13 +294,7 @@ app.post('/email_check', async (req, res) => {
     const checkEmail = await pool.query(`
       SELECT 'customer' AS table_name FROM customer WHERE cus_email = $1
       UNION ALL
-      SELECT 'hauler' AS table_name FROM hauler WHERE haul_email = $1
-      UNION ALL
-      SELECT 'operational_dispatcher' AS table_name FROM operational_dispatcher WHERE op_email = $1
-      UNION ALL
-      SELECT 'billing_officer' AS table_name FROM billing_officer WHERE bo_email = $1
-      UNION ALL
-      SELECT 'account_manager' AS table_name FROM account_manager WHERE acc_email = $1
+      SELECT 'employee' AS table_name FROM employee WHERE emp_email = $1
     `, [email]);
 
     if (checkEmail.rows.length > 0) {
@@ -334,13 +322,7 @@ app.post('/contact_check', async (req, res) => {
     const checkEmail = await pool.query(`
       SELECT 'customer' AS table_name FROM customer WHERE cus_contact = $1
       UNION ALL
-      SELECT 'hauler' AS table_name FROM hauler WHERE haul_contact = $1
-      UNION ALL
-      SELECT 'operational_dispatcher' AS table_name FROM operational_dispatcher WHERE op_contact = $1
-      UNION ALL
-      SELECT 'billing_officer' AS table_name FROM billing_officer WHERE bo_contact = $1
-      UNION ALL
-      SELECT 'account_manager' AS table_name FROM account_manager WHERE acc_contact = $1
+      SELECT 'employee' AS table_name FROM employee WHERE emp_contact = $1
     `, [contact]);
 
     if (checkEmail.rows.length > 0) {
@@ -356,7 +338,7 @@ app.post('/contact_check', async (req, res) => {
   }
 });
 
-// EMAIL forgot pass check existing cus and haul
+// EMAIL forgot pass check existing cus and employee
 app.post('/email_check_forgotpass', async (req, res) => {
   const { email } = req.body;
 
@@ -368,7 +350,7 @@ app.post('/email_check_forgotpass', async (req, res) => {
     const checkEmail = await pool.query(`
       SELECT 'customer' AS table_name FROM customer WHERE cus_email = $1
       UNION ALL
-      SELECT 'hauler' AS table_name FROM hauler WHERE haul_email = $1
+      SELECT 'employee' AS table_name FROM employee WHERE emp_email = $1
     `, [email]);
 
     if (checkEmail.rows.length === 0) {
@@ -404,8 +386,8 @@ app.post('/signup_google', async (req, res) => {
         mname,
         lname,
         email,
-        'active',                 // cus_status
-        'non-contractual',         // cus_type
+        'Active',                 // cus_status
+        'Non-Contractual',         // cus_type
         'google',                  // cus_auth_method
         photoBytes,                // cus_profile (converted base64 image)
         contact,
@@ -455,7 +437,7 @@ app.post('/signup', async (req, res) => {
       [
         fname, mname, lname, email, hashedPassword,
         contact, province, city, brgy, street, postal,
-        'active', 'non-contractual', 'email_password'
+        'Active', 'Non-Contractual', 'email_password'
       ]
     );
 
@@ -508,10 +490,10 @@ app.post('/login', async (req, res) => {
 
       // Compare the hashed password with the stored hashed password
       if (hashedPassword === storedHashedPassword) {
-        if (status == 'deactivated') {
+        if (status == 'Deactivated') {
           return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
         }
-        if (status == 'suspended') {
+        if (status == 'Suspended') {
           return res.status(203).json({ message: 'Your Accoount is currently suspended' });
         }
 
@@ -531,38 +513,42 @@ app.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Incorrect password' });
     }
 
-    // Check if hauler exists by email
-    const checkHaulerEmail = await pool.query(
-      'SELECT * FROM HAULER WHERE haul_email = $1',
+    // Check if emp exists by email
+    const checkEmpEmail = await pool.query(
+      `SELECT e.*
+       FROM employee e
+       JOIN roles r ON e.role_id = r.role_id
+       WHERE e.emp_email = $1
+       AND r.role_name = 'Hauler'`,
       [email]
     );
 
-    if (checkHaulerEmail.rows.length > 0) {
+
+    if (checkEmpEmail.rows.length > 0) {
       // Get the hashed password from the database
-      const hauler = checkHaulerEmail.rows[0];
-      const authType = hauler.haul_auth_method;
-      const status = hauler.haul_status;
-      //const email = hauler.haul_email;
+      const employee = checkEmpEmail.rows[0];
+      const authType = employee.emp_auth_method;
+      const status = employee.emp_status;
 
       if (authType == 'google') {
         return res.status(402).json({ message: 'Looks like this account is signed up with google. Please login with google' });
       }
 
-      const storedHashedPassword = hauler.haul_password;
+      const storedHashedPassword = employee.emp_password;
       // Hash the incoming password
       const hashedPassword = hashPassword(password);
 
       // Compare the hashed password with the stored hashed password
       if (hashedPassword === storedHashedPassword) {
-        if (status == 'deactivated') {
+        if (status == 'Deactivated') {
           return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
         }
-        if (status == 'suspended') {
+        if (status == 'Suspended') {
           return res.status(203).json({ message: 'Your Accoount is currently suspended' });
         }
 
         // Access the inserted row
-        const id = hauler.haul_id;
+        const id = employee.emp_id;
 
         // store user data to token
         const user = { email: email, id: id };
@@ -571,7 +557,7 @@ app.post('/login', async (req, res) => {
         // console.error('access: ' + accessToken);
         // console.error('refresh: ' + refreshToken);
         return res.status(201).json({
-          message: 'User found in hauler',
+          message: 'User found as Employee',
           accessToken: accessToken,
           refreshToken: refreshToken
         });
@@ -581,7 +567,7 @@ app.post('/login', async (req, res) => {
     }
 
     // If email not found in either table
-    return res.status(404).json({ error: 'Email address not found in customer or hauler tables' });
+    return res.status(404).json({ error: 'Email address not found in customer or employee tables' });
   }
   catch (error) {
     console.error('Error during login:', error.message);
@@ -674,21 +660,25 @@ app.post('/onOpenApp', authenticateToken, async (req, res) => {
     );
     if (checkCustomerEmail.rowCount > 0) {
       const customer = checkCustomerEmail.rows[0];
-      if (customer.cus_status == 'active') {
+      if (customer.cus_status == 'Active') {
         res.status(200).json({ message: 'User is a customer' });
       }
     }
 
     //check where user is from table
-    const checkHaulerEmail = await pool.query(
-      'SELECT * FROM HAULER WHERE haul_email = $1',
+    const checkEmployeeEmail = await pool.query(
+      `SELECT e.*
+       FROM employee e
+       JOIN roles r ON e.role_id = r.role_id
+       WHERE e.emp_email = $1
+       AND r.role_name = 'Hauler'`,
       [email]
     );
 
-    if (checkHaulerEmail.rowCount > 0) {
-      const hauler = checkHaulerEmail.rows[0];
-      if (hauler.haul_status == 'active') {
-        res.status(201).json({ message: 'User is a hauler' });
+    if (checkEmployeeEmail.rowCount > 0) {
+      const employee = checkEmployeeEmail.rows[0];
+      if (employee.emp_status == 'Active') {
+        res.status(201).json({ message: 'User is a employee' });
       }
     }
   } catch (error) {
@@ -746,10 +736,10 @@ app.post('/login_google', async (req, res) => {
       if (authType == 'email_password') {
         return res.status(402).json({ message: 'Looks like this account is registered with email and password. Please log in using your email and password.' });
       }
-      if (status == 'deactivated') {
+      if (status == 'Deactivated') {
         return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
       }
-      if (status == 'suspended') {
+      if (status == 'Suspended') {
         return res.status(203).json({ message: 'Your Accoount is currently suspended' });
       }
       // Access the inserted row
@@ -766,29 +756,33 @@ app.post('/login_google', async (req, res) => {
       //return res.status(200).json({ message: 'User found in customer' });
     }
 
-    // Check if hauler exists by email
-    const checkHaulerEmail = await pool.query(
-      'SELECT * FROM HAULER WHERE haul_email = $1',
+    // Check if EMPLOYEE exists by email
+    const checkEmpEmail = await pool.query(
+      `SELECT e.*
+       FROM employee e
+       JOIN roles r ON e.role_id = r.role_id
+       WHERE e.emp_email = $1
+       AND r.role_name = 'Hauler'`,
       [email]
     );
 
-    if (checkHaulerEmail.rows.length > 0) {
+    if (checkEmpEmail.rows.length > 0) {
       // Get the hashed password from the database
-      const hauler = checkHaulerEmail.rows[0];
-      const authType = hauler.haul_auth_method;
-      const status = hauler.haul_status;
+      const employee = checkEmpEmail.rows[0];
+      const authType = employee.emp_auth_method;
+      const status = employee.emp_status;
 
       if (authType == 'email_password') {
         return res.status(402).json({ message: 'Looks like this account is registered with email and password. Please log in using your email and password.' });
       }
-      if (status == 'deactivated') {
+      if (status == 'Deactivated') {
         return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
       }
-      if (status == 'suspended') {
+      if (status == 'Suspended') {
         return res.status(203).json({ message: 'Your Accoount is currently suspended' });
       }
       // Access the inserted row
-      const id = hauler.haul_id;
+      const id = employee.emp_id;
 
       // store user data to token
       const user = { email: email, id: id };
@@ -796,15 +790,14 @@ app.post('/login_google', async (req, res) => {
       const { accessToken, refreshToken } = generateTokens(user);
       console.log(accessToken + '' + refreshToken);
       return res.status(201).json({
-        message: 'Successful google hauler login',
+        message: 'Successful google EMPLOYEE login',
         accessToken: accessToken,
         refreshToken: refreshToken
       });
-      //return res.status(201).json({ message: 'User found in hauler' });
     }
 
     // If email not found in either table
-    return res.status(404).json({ error: 'Email address not found in customer or hauler tables' });
+    return res.status(404).json({ error: 'Email address not found in customer or EMPLOYEE tables' });
   }
   catch (error) {
     console.error('Error during login:', error.message);
@@ -841,14 +834,17 @@ app.post('/update_password', async (req, res) => {
       return res.status(200).json({ message: 'Password updated successfully for customer' });
     }
 
-    // Check if the email exists in the 'hauler' table
-    const checkHaulerEmail = await pool.query(
-      'SELECT haul_password FROM HAULER WHERE haul_email = $1',
+    // Check if the email exists in the 'employee' table
+    const checkEmployeeEmail = await pool.query(
+      `SELECT e.emp_password 
+       FROM employee e
+       JOIN roles r ON e.role_id = r.role_id
+       WHERE e.emp_email = $1 AND r.role_name = 'Hauler'`,
       [email]
     );
 
-    if (checkHaulerEmail.rows.length > 0) {
-      const currentPassword = checkHaulerEmail.rows[0].haul_password;
+    if (checkEmployeeEmail.rows.length > 0) {
+      const currentPassword = checkEmployeeEmail.rows[0].emp_password;
       const hashedNewPassword = hashPassword(newPassword);
 
       // Check if the new password is the same as the current password
@@ -858,15 +854,15 @@ app.post('/update_password', async (req, res) => {
 
       // Update the password if it is different
       await pool.query(
-        'UPDATE HAULER SET haul_password = $1 WHERE haul_email = $2',
+        'UPDATE employee SET emp_password = $1 WHERE emp_email = $2',
         [hashedNewPassword, email]
       );
 
-      return res.status(200).json({ message: 'Password updated successfully for hauler' });
+      return res.status(200).json({ message: 'Password updated successfully for employee' });
     }
 
     // If email not found in either table
-    return res.status(404).json({ error: 'Email address not found in customer or hauler tables' });
+    return res.status(404).json({ error: 'Email address not found in customer or employee tables' });
   }
   catch (error) {
     console.error('Error during password update:', error.message);
@@ -973,28 +969,38 @@ app.post('/customer/fetch_data', authenticateToken, async (req, res) => {
   try {
     let result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
 
-    // If not found in CUSTOMER table, check in the HAULER table
+    // If not found in CUSTOMER table, check in the EMPLOYEE table
     if (result.rows.length === 0) {
-      result = await pool.query('SELECT * FROM HAULER WHERE haul_email = $1', [email]);
+      result = await pool.query(`
+        SELECT e.*, r.role_name 
+        FROM EMPLOYEE e 
+        LEFT JOIN ROLES r ON e.role_id = r.role_id 
+        WHERE e.emp_email = $1
+      `, [email]);
     }
 
     // Check if any user data was found
     if (result.rows.length > 0) {
       const user = result.rows[0];
 
-      // Handle profile image for both CUSTOMER and HAULER tables
+      // Handle profile image for both CUSTOMER and EMPLOYEE tables
       let base64Image = null;
       if (user.cus_profile) {
         base64Image = user.cus_profile.toString('base64');  // If cus_profile exists
-      } else if (user.haul_profile) {
-        base64Image = user.haul_profile.toString('base64'); // If haul_profile exists
+      } else if (user.emp_profile) {
+        base64Image = user.emp_profile.toString('base64'); // If emp_profile exists
       }
 
       // Add the base64 image data to the response object
       const responseData = {
         ...user,
-        profileImage: base64Image  // Add the base64-encoded image here
+        profileImage: base64Image,  // Add the base64-encoded image here
       };
+
+      // Conditionally add `roleName` if it's an employee
+      if (user.role_name) {
+        responseData.emp_role = user.role_name;
+      }
 
       // Log the base64 string (optional for debugging)
       //console.log('Base64 Encoded Image:', base64Image);
@@ -1015,21 +1021,21 @@ app.post('/customer/fetch_profile', authenticateToken, async (req, res) => {
   try {
     let result = await pool.query('SELECT cus_profile FROM CUSTOMER WHERE cus_email = $1', [email]);
 
-    // If not found in CUSTOMER table, check in the HAULER table
+    // If not found in CUSTOMER table, check in the EMPLOYEE table
     if (result.rows.length === 0) {
-      result = await pool.query('SELECT haul_profile FROM HAULER WHERE haul_email = $1', [email]);
+      result = await pool.query('SELECT emp_profile FROM EMPLOYEE WHERE emp_email = $1', [email]);
     }
 
     // Check if any user data was found
     if (result.rows.length > 0) {
       const user = result.rows[0];
 
-      // Handle profile image for both CUSTOMER and HAULER tables
+      // Handle profile image for both CUSTOMER and EMPLOYEE tables
       let base64Image = null;
       if (user.cus_profile) {
         base64Image = user.cus_profile.toString('base64');  // If cus_profile exists
-      } else if (user.haul_profile) {
-        base64Image = user.haul_profile.toString('base64'); // If haul_profile exists
+      } else if (user.emp_profile) {
+        base64Image = user.emp_profile.toString('base64'); // If emp_profile exists
       }
 
       // Add the base64 image data to the response object
@@ -1071,7 +1077,7 @@ app.post('/customer/fetch_notifications', authenticateToken, async (req, res) =>
 //waste category
 app.get('/waste_category', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM waste_category WHERE wc_status = $1', ['active']);
+    const result = await pool.query('SELECT * FROM waste_category WHERE wc_status = $1', ['Active']);
     res.json(result.rows);
   } catch (err) {
     console.error(err.message);
@@ -1177,7 +1183,7 @@ app.post('/fetch_booking', authenticateToken, async (req, res) => {
       res.status(200).json({
         booking: result.rows,
         wasteTypes: result2.rows
-        
+
       });
     } else {
       res.status(404).json({ error: 'No bookings found' });
@@ -1288,8 +1294,8 @@ app.post('/booking_cancel', authenticateToken, async (req, res) => {
   } = req.body;
 
   try {
-    const query = 
-    'UPDATE booking SET bk_status = \'Cancelled\' WHERE cus_id = $1 AND bk_id = $2 RETURNING *';
+    const query =
+      'UPDATE booking SET bk_status = \'Cancelled\' WHERE cus_id = $1 AND bk_id = $2 RETURNING *';
 
     const result = await pool.query(query, [
       id,
