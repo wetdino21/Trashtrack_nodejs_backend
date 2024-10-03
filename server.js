@@ -249,6 +249,7 @@ app.post('/verify_code', async (req, res) => {
     // if (!result.rows[0]) {
     //   return res.status(404).json({ error: 'No verification record found' });
     // }
+//
 
     const { email_code, email_expire, email_attempts } = result.rows[0];
     const currentTime = Date.now();
