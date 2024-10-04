@@ -1,4 +1,7 @@
+
+
 const express = require('express');
+const path = require('path');
 const { Pool } = require('pg');
 const bodyParser = require('body-parser');
 const cors = require('cors');
@@ -24,6 +27,9 @@ const { smtp } = require('./config');
 const app = express();
 const port = 3000;
 
+const networkLink = `http://192.168.254.187:${port}`;
+
+
 // PostgreSQL connection
 const pool = new Pool({
   user: 'postgres',
@@ -38,9 +44,10 @@ const pool = new Pool({
 // app.use(bodyParser.json());
 // app.use(cors());
 // Increase the limit for JSON and URL-encoded payloads
+app.use('/public', express.static(path.join(__dirname, 'public')));
+
 app.use(bodyParser.json({ limit: '50mb' })); // Adjust the limit as needed
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
-
 ////////////////////////////////////////
 
 const fs = require('fs');
@@ -68,11 +75,80 @@ const generateNewAccessToken = (user) => {
 
 // Function to generate a random, secure verification code
 function generateRandomCode() {
-  return crypto.randomBytes(3).toString('hex').toUpperCase(); // 6-character hex code
+  return Math.floor(100000 + Math.random() * 900000).toString(); // Generates a 6-digit number
 }
 
-// Email sending function
-async function sendCodeForgotPassEmail(to, code) {
+
+// Middleware to authenticate access token
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(403).json({ error: 'No access token provided' });
+
+  // Verify the access token
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({ error: 'Access token has expired' });
+      }
+      return res.status(403).json({ error: 'Invalid access token' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// send code Email 
+async function sendRegistrationCode(to, code) {
+  try {
+    const info = await transporter.sendMail({
+      from: smtp.auth.user, // Sender address
+      to: to,
+      subject: 'Verification Code',          // List of receivers
+      html: `
+   <html>
+    <body style="font-family: Arial, sans-serif; color: #fff; margin: 0; padding: 0;">
+      <div style="background-color: #673ab7; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto; ">
+       
+          <div style="text-align: center;">
+           <h1 style="color: #1abc9c; text-align: center; font-size: 40px">TrashTrack</h1>
+               <img src="cid:trashtrack_image" alt="TrashTrack Logo" style="max-width: 200px; height: auto;">
+          </div>
+        <h2 style="color: #ecf0f1;">Dear User,</h2>
+        <p style="color: #ecf0f1; font-size: 16px">Thank you for registering with Trashtrack.</p>
+       
+        <p style="color: #ecf0f1; font-size: 16px">To complete your registration, please use the following verification code:</p>
+        <div style="background-color: #1abc9c; padding: 15px; border-radius: 4px; max-width: fit-content; margin: 0 auto;">
+          <h3 style="color: #fff; font-size: 30px; text-align: left; margin: 0; letter-spacing: 5px;">
+              ${code}
+          </h3>
+        </div>
+        <p style="color: #ecf0f1; font-size: 16px">If you did not request this verification code, please ignore this email.</p>
+        <p style="color: #ecf0f1; font-size: 16px">Best regards,<br>The TrashTrack Team</p>
+      </div>
+    </body>
+  </html>
+
+  `,
+      attachments: [
+        {
+          filename: 'trashtrack.jpg',
+          //path: 'C:/CAPSTONE/trashtrack/frontend/assets/icon/goldy.jpg',
+          path: '../backend/public/images/trashtrackicon.png',
+          cid: 'trashtrack_image' // same as the image cid in the <img> tag
+        },
+      ],
+    });
+    return info.messageId;
+  } catch (error) {
+    console.error('Datbase error:', error.message);
+    throw new Error('Failed to send email');
+  }
+}
+
+//send code email forgotpass
+async function sendForgotPassCode(to, code) {
   try {
     const info = await transporter.sendMail({
       from: smtp.auth.user, // Sender address
@@ -81,25 +157,35 @@ async function sendCodeForgotPassEmail(to, code) {
       html: `
   <html>
   <body style="font-family: Arial, sans-serif; color: #fff; margin: 0; padding: 0;">
-    <div style="background-color: #2c3e50; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto; ">
-      <h1 style="color: #1abc9c; text-align: center; font-size: 40px">Trashtrack</h1>
+    <div style="background-color: #673ab7; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto; ">
+       <div style="text-align: center;">
+           <h1 style="color: #1abc9c; text-align: center; font-size: 40px">TrashTrack</h1>
+               <img src="cid:trashtrack_image" alt="TrashTrack Logo" style="max-width: 200px; height: auto;">
+          </div>
       <h2 style="color: #ecf0f1;">Password Reset Request</h2>
-      <p style="color: #ecf0f1;">Dear User,</p>
-      <p style="color: #ecf0f1;">You have requested to reset your password for your Trashtrack account.</p>
-      <p style="color: #ecf0f1;">Please use the following verification code to proceed with resetting your password:</p>
+      <h2 style="color: #ecf0f1;">Dear User,</h2>
+      <p style="color: #ecf0f1; font-size: 16px">You have requested to reset your password for your Trashtrack account.</p>
+      <p style="color: #ecf0f1; font-size: 16px">Please use the following verification code to proceed with resetting your password:</p>
       <div style="background-color: #1abc9c; padding: 15px; border-radius: 4px; max-width: fit-content; margin: 0 auto;">
-        <h3 style="color: #fff; font-size: 30px; text-align: left; margin: 0;">
+        <h3 style="color: #fff; font-size: 30px; text-align: left; margin: 0; letter-spacing: 5px;">
           ${code}
         </h3>
       </div>
-      <p style="color: #ecf0f1;">This code is valid for 5 minutes.</p>
-      <p style="color: #ecf0f1;">If you did not request a password reset, please ignore this email. Your account will remain secure.</p>
-      <p style="color: #ecf0f1;">Best regards,<br>The Trashtrack Team</p>
+      <p style="color: #ecf0f1; font-size: 16px">This code is valid for 5 minutes.</p>
+      <p style="color: #ecf0f1; font-size: 16px">If you did not request a password reset, please ignore this email. Your account will remain secure.</p>
+      <p style="color: #ecf0f1; font-size: 16px">Best regards,<br>The TrashTrack Team</p>
     </div>
   </body>
 </html>
-
   `,
+      attachments: [
+        {
+          filename: 'trashtrack.jpg',
+          //path: 'C:/CAPSTONE/trashtrack/frontend/assets/icon/goldy.jpg',
+          path: '../backend/public/images/trashtrackicon.png',
+          cid: 'trashtrack_image' // same as the image cid in the <img> tag
+        },
+      ],
     });
     return info.messageId;
   } catch (error) {
@@ -164,7 +250,7 @@ app.post('/send_code_createacc', async (req, res) => {
       [email, hashedCode, expiration]
     );
 
-    await sendCodeForgotPassEmail(email, code); //call function to send email
+    await sendRegistrationCode(email, code); //call function to send email
 
     return res.status(200).json({ message: 'Verification code sent' });
   } catch (error) {
@@ -225,7 +311,7 @@ app.post('/send_code_forgotpass', async (req, res) => {
       [email, hashedCode, expiration]
     );
 
-    await sendCodeForgotPassEmail(email, code); //call function to send email
+    await sendForgotPassCode(email, code); //call function to send email
 
     return res.status(200).json({ message: 'Verification code sent' });
   } catch (error) {
@@ -461,6 +547,72 @@ app.post('/signup', async (req, res) => {
   }
 });
 
+// Update account
+app.post('/user_update', authenticateToken, async (req, res) => {
+  const id = req.user.id; // Get the user ID from the token
+  const { fname, mname, lname, email, photo, contact, province, city, brgy, street, postal } = req.body;
+
+  try {
+    // Convert base64 string back to bytea
+    const photoBytes = photo ? Buffer.from(photo, 'base64') : null;
+
+    // Update the customer record in the database
+    const result = await pool.query(
+      `UPDATE CUSTOMER
+      SET 
+        cus_fname = $1, 
+        cus_mname = $2, 
+        cus_lname = $3, 
+        cus_email = $4, 
+        cus_profile = $5,
+        cus_contact = $6, 
+        cus_province = $7, 
+        cus_city = $8, 
+        cus_brgy = $9, 
+        cus_street = $10, 
+        cus_postal = $11
+      WHERE cus_id = $12 RETURNING *`,
+      [
+        fname,
+        mname,
+        lname,
+        email,
+        photoBytes,
+        contact,
+        province,
+        city,
+        brgy,
+        street,
+        postal,
+        id
+      ]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // // Access the updated row
+    // const updatedRow = result.rows[0];
+
+    // // Store updated user data to token if necessary
+    // const user = { email: updatedRow.cus_email, id: updatedRow.cus_id };
+
+    // // Generate tokens if needed
+    // const { accessToken, refreshToken } = generateTokens(user);
+
+    return res.status(200).json({
+      message: 'User updated successfully',
+      // accessToken: accessToken,
+      // refreshToken: refreshToken,
+      // user: updatedRow         // Return the updated user information if needed
+    });
+  } catch (error) {
+    console.error('Error updating user:', error.message); // Show debug print on server cmd
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 
 // LOGIN endpoint
 app.post('/login', async (req, res) => {
@@ -629,25 +781,25 @@ app.post('/refresh_token', (req, res) => {
 //   }
 // };
 
-// Middleware to authenticate access token
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+// // Middleware to authenticate access token
+// const authenticateToken = (req, res, next) => {
+//   const authHeader = req.headers['authorization'];
+//   const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) return res.status(403).json({ error: 'No access token provided' });
+//   if (!token) return res.status(403).json({ error: 'No access token provided' });
 
-  // Verify the access token
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      if (err.name === 'TokenExpiredError') {
-        return res.status(401).json({ error: 'Access token has expired' });
-      }
-      return res.status(403).json({ error: 'Invalid access token' });
-    }
-    req.user = user;
-    next();
-  });
-};
+//   // Verify the access token
+//   jwt.verify(token, JWT_SECRET, (err, user) => {
+//     if (err) {
+//       if (err.name === 'TokenExpiredError') {
+//         return res.status(401).json({ error: 'Access token has expired' });
+//       }
+//       return res.status(403).json({ error: 'Invalid access token' });
+//     }
+//     req.user = user;
+//     next();
+//   });
+// };
 
 //on Open App with token
 app.post('/onOpenApp', authenticateToken, async (req, res) => {
@@ -1613,8 +1765,13 @@ app.get('/payment_status/:paymentId', authenticateToken, async (req, res) => {
 // app.listen(port, () => {
 //   console.log(`Server running on http://localhost:${port}`);
 // });
+
+// app.listen(port, '0.0.0.0', () => {
+//   console.log(`Server running on http://192.168.254.187:${port}`);
+// });
+
 app.listen(port, '0.0.0.0', () => {
-  console.log(`Server running on http://192.168.254.187:${port}`);
+  console.log(`Server running on ${networkLink}`);
 });
 
 //http://192.168.119.156
