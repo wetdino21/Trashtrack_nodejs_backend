@@ -112,7 +112,7 @@ async function sendRegistrationCode(to, code) {
       <div style="background-color: #673ab7; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto; ">
        
           <div style="text-align: center;">
-           <h1 style="color: #1abc9c; text-align: center; font-size: 40px">TrashTrack</h1>
+           <h1 style="color: #fff; text-align: center; font-size: 40px">TrashTrack</h1>
                <img src="cid:trashtrack_image" alt="TrashTrack Logo" style="max-width: 200px; height: auto;">
           </div>
         <h2 style="color: #ecf0f1;">Dear User,</h2>
@@ -147,6 +147,59 @@ async function sendRegistrationCode(to, code) {
   }
 }
 
+// send code email update 
+async function sendEmailUpdateCode(to, code) {
+  try {
+    const info = await transporter.sendMail({
+      from: smtp.auth.user, // Sender address
+      to: to,
+      subject: 'Verification Code',          // List of receivers
+      html: `
+  <html>
+  <body style="font-family: Arial, sans-serif; color: #fff; margin: 0; padding: 0;">
+    <div style="background-color: #673ab7; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto;">
+      <div style="text-align: center;">
+        <h1 style="color: #fff; text-align: center; font-size: 40px;">TrashTrack</h1>
+        <img src="cid:trashtrack_image" alt="TrashTrack Logo" style="max-width: 200px; height: auto;">
+      </div>
+      <h2 style="color: #ecf0f1;">Dear User,</h2>
+      <p style="color: #ecf0f1; font-size: 16px;">
+        We've received a request to update the email address associated with your TrashTrack account.
+      </p>
+      <p style="color: #ecf0f1; font-size: 16px;">
+        To confirm this change and verify your new email address, please enter the following verification code:
+      </p>
+      <div style="background-color: #1abc9c; padding: 15px; border-radius: 4px; max-width: fit-content; margin: 0 auto;">
+        <h3 style="color: #fff; font-size: 30px; text-align: center; margin: 0; letter-spacing: 5px;">
+          ${code}
+        </h3>
+      </div>
+      <p style="color: #ecf0f1; font-size: 16px;">
+        If you did not request this change, please ignore this email, and your email address will remain unchanged.
+      </p>
+      <p style="color: #ecf0f1; font-size: 16px;">
+        Best regards,<br>The TrashTrack Team
+      </p>
+    </div>
+  </body>
+</html>
+  `,
+      attachments: [
+        {
+          filename: 'trashtrack.jpg',
+          //path: 'C:/CAPSTONE/trashtrack/frontend/assets/icon/goldy.jpg',
+          path: '../backend/public/images/trashtrackicon.png',
+          cid: 'trashtrack_image' // same as the image cid in the <img> tag
+        },
+      ],
+    });
+    return info.messageId;
+  } catch (error) {
+    console.error('Datbase error:', error.message);
+    throw new Error('Failed to send email');
+  }
+}
+
 //send code email forgotpass
 async function sendForgotPassCode(to, code) {
   try {
@@ -159,7 +212,7 @@ async function sendForgotPassCode(to, code) {
   <body style="font-family: Arial, sans-serif; color: #fff; margin: 0; padding: 0;">
     <div style="background-color: #673ab7; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto; ">
        <div style="text-align: center;">
-           <h1 style="color: #1abc9c; text-align: center; font-size: 40px">TrashTrack</h1>
+           <h1 style="color: #fff; text-align: center; font-size: 40px">TrashTrack</h1>
                <img src="cid:trashtrack_image" alt="TrashTrack Logo" style="max-width: 200px; height: auto;">
           </div>
       <h2 style="color: #ecf0f1;">Password Reset Request</h2>
@@ -312,6 +365,66 @@ app.post('/send_code_forgotpass', async (req, res) => {
     );
 
     await sendForgotPassCode(email, code); //call function to send email
+
+    return res.status(200).json({ message: 'Verification code sent' });
+  } catch (error) {
+    console.error('Datbase error:', error.message);
+    return res.status(500).json({ error: 'Failed to send verification code' });
+  }
+});
+
+
+// send code user update (with check email)
+app.post('/send_code_email_update', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  const checkEmail = await pool.query(`
+    SELECT 'customer' AS table_name FROM customer WHERE cus_email = $1
+    UNION ALL
+    SELECT 'employee' AS table_name FROM employee WHERE emp_email = $1
+  `, [email]);
+
+  if (checkEmail.rows.length > 0) {
+    return res.status(400).json({ error: 'Email already exists', table: checkEmail.rows[0].table_name });
+  }
+
+  if (emailLimitCache[email] && Date.now() - emailLimitCache[email] < RATE_LIMIT) {
+    //console.error('Too many requests. Please try again later.'); // check code in CMD
+
+    const timeremain = (30000 - (emailLimitCache[email] && Date.now() - emailLimitCache[email]));
+    return res.status(429).json({ error: 'Too many requests. Please try again later.', timeremain: timeremain });// Pass remaining time
+  }
+
+  emailLimitCache[email] = Date.now();
+
+  const checkExistingCode = await pool.query(`
+    SELECT * FROM email_verification WHERE email = $1
+  `, [email]);
+
+  if (checkExistingCode.rows.length > 0) {
+    await pool.query(
+      'DELETE FROM email_verification WHERE email = $1',
+      [email]
+    );
+  }
+
+  //code genreratd
+  const code = generateRandomCode();
+  console.error(code); // check code in CMD
+  const expiration = Date.now() + 5 * 60 * 1000; // 5 minutes
+  const hashedCode = hashPassword(code);
+
+  try {
+    await pool.query(
+      'INSERT INTO email_verification (email, email_code, email_expire) VALUES ($1, $2, $3)',
+      [email, hashedCode, expiration]
+    );
+
+    await sendEmailUpdateCode(email, code); //call function to send email
 
     return res.status(200).json({ message: 'Verification code sent' });
   } catch (error) {
@@ -592,20 +705,20 @@ app.post('/user_update', authenticateToken, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // // Access the updated row
-    // const updatedRow = result.rows[0];
+    // Access the updated row
+    const updatedRow = result.rows[0];
 
-    // // Store updated user data to token if necessary
-    // const user = { email: updatedRow.cus_email, id: updatedRow.cus_id };
+    // Store updated user data to token if necessary
+    const user = { email: updatedRow.cus_email, id: updatedRow.cus_id };
 
-    // // Generate tokens if needed
-    // const { accessToken, refreshToken } = generateTokens(user);
+    // Generate tokens if needed
+    const { accessToken, refreshToken } = generateTokens(user);
 
     return res.status(200).json({
       message: 'User updated successfully',
-      // accessToken: accessToken,
-      // refreshToken: refreshToken,
-      // user: updatedRow         // Return the updated user information if needed
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      //user: updatedRow         // Return the updated user information if needed
     });
   } catch (error) {
     console.error('Error updating user:', error.message); // Show debug print on server cmd
@@ -1045,7 +1158,7 @@ app.post('/send_email', async (req, res) => {
   <html>
     <body style="font-family: Arial, sans-serif; color: #fff; margin: 0; padding: 0;">
       <div style="background-color: #2c3e50; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto; border: 10px solid #2ecc71;">
-        <h1 style="color: #ecf0f1; text-align: center;">Trashtrack</h1>
+        <h1 style="color: #fff; text-align: center;">Trashtrack</h1>
         <h2 style="color: #ecf0f1;">Dear User,</h2>
         <p style="color: #ecf0f1;">Thank you for registering with Trashtrack.</p>
         <p style="color: #ecf0f1;">To complete your registration, please use the following verification code:</p>
@@ -1083,7 +1196,7 @@ app.post('/send_email_forgotpass', async (req, res) => {
   <html>
   <body style="font-family: Arial, sans-serif; color: #fff; margin: 0; padding: 0;">
     <div style="background-color: #2c3e50; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto; border: 10px solid #2ecc71;">
-      <h1 style="color: #ecf0f1; text-align: center;">Trashtrack</h1>
+      <h1 style="color: #fff; text-align: center;">Trashtrack</h1>
       <h2 style="color: #ecf0f1;">Password Reset Request</h2>
       <p style="color: #ecf0f1;">Dear User,</p>
       <p style="color: #ecf0f1;">You have requested to reset your password for your Trashtrack account.</p>
@@ -1111,6 +1224,48 @@ app.post('/send_email_forgotpass', async (req, res) => {
   }
 });
 ///EMAIL
+
+
+//deactivate
+app.post('/deactivate', authenticateToken, async (req, res) => {
+  const email = req.user.email;
+
+  try {
+    // Check if the user is in the CUSTOMER or EMPLOYEE table
+    let result = await pool.query('SELECT cus_status FROM CUSTOMER WHERE cus_email = $1', [email]);
+
+    let isCustomer = true;
+    if (result.rows.length === 0) {
+      result = await pool.query('SELECT emp_status FROM EMPLOYEE WHERE emp_email = $1', [email]);
+      isCustomer = false;
+    }
+
+    // Check if any user data was found
+    if (result.rows.length > 0) {
+      // Prepare the deactivation query
+      const deactivateQuery = isCustomer
+        ? 'UPDATE CUSTOMER SET cus_status = $1 WHERE cus_email = $2'
+        : 'UPDATE EMPLOYEE SET emp_status = $1 WHERE emp_email = $2';
+
+      // Execute the deactivation query
+      result = await pool.query(deactivateQuery, ['Deactivated', email]);
+
+      // Check if the deactivation was successful using rowCount
+      if (result.rowCount > 0) {
+        res.status(200).json({ message: 'Account deactivated successfully' });
+      } else {
+        res.status(404).json({ error: 'Unable to deactivate account' });
+      }
+    } else {
+      console.error('User not found');
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error deactivating user:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 
 
 ///////////CUSTOMER DATA ////////////////////////////////////////////////////////
@@ -1159,6 +1314,7 @@ app.post('/customer/fetch_data', authenticateToken, async (req, res) => {
 
       res.json(responseData);
     } else {
+      console.error('User not found');
       res.status(404).json({ error: 'User not found' });
     }
   } catch (error) {
@@ -1167,6 +1323,7 @@ app.post('/customer/fetch_data', authenticateToken, async (req, res) => {
   }
 });
 
+//fetch profile
 app.post('/customer/fetch_profile', authenticateToken, async (req, res) => {
   const email = req.user.email;
 
