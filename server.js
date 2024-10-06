@@ -246,6 +246,66 @@ async function sendForgotPassCode(to, code) {
     throw new Error('Failed to send email');
   }
 }
+
+//send code email bind to trashtrack
+async function sendBindTrashtrackCode(to, code) {
+  try {
+    const info = await transporter.sendMail({
+      from: smtp.auth.user, // Sender address
+      to: to,
+      subject: 'Verification Code',          // List of receivers
+      html: `
+ <html>
+  <body style="font-family: Arial, sans-serif; color: #fff; margin: 0; padding: 0;">
+    <div style="background-color: #673ab7; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto;">
+      <div style="text-align: center;">
+        <h1 style="color: #fff; text-align: center; font-size: 40px">TrashTrack</h1>
+        <img src="cid:trashtrack_image" alt="TrashTrack Logo" style="max-width: 200px; height: auto;">
+      </div>
+      <h2 style="color: #ecf0f1;">Set Your Password</h2>
+      <h2 style="color: #ecf0f1;">Dear User,</h2>
+      <p style="color: #ecf0f1; font-size: 16px;">
+        Thank you for binding your account with email and password, allowing you to access TrashTrack with either Google Authentication or a password.
+      </p>
+      <p style="color: #ecf0f1; font-size: 16px;">
+        Please use the following verification code to complete the process of setting your password:
+      </p>
+      <div style="background-color: #1abc9c; padding: 15px; border-radius: 4px; max-width: fit-content; margin: 0 auto;">
+        <h3 style="color: #fff; font-size: 30px; text-align: left; margin: 0; letter-spacing: 5px;">
+          ${code}
+        </h3>
+      </div>
+      <p style="color: #ecf0f1; font-size: 16px;">
+        This code is valid for 5 minutes.
+      </p>
+      <p style="color: #ecf0f1; font-size: 16px;">
+        If you did not initiate this request, please ignore this email and continue using your Google account to log in. Your account will remain secure.
+      </p>
+      <p style="color: #ecf0f1; font-size: 16px;">
+        Best regards,<br>The TrashTrack Team
+      </p>
+    </div>
+  </body>
+</html>
+
+  `,
+      attachments: [
+        {
+          filename: 'trashtrack.jpg',
+          //path: 'C:/CAPSTONE/trashtrack/frontend/assets/icon/goldy.jpg',
+          path: '../backend/public/images/trashtrackicon.png',
+          cid: 'trashtrack_image' // same as the image cid in the <img> tag
+        },
+      ],
+    });
+    return info.messageId;
+  } catch (error) {
+    console.error('Datbase error:', error.message);
+    throw new Error('Failed to send email');
+  }
+}
+
+
 // Rate limiting
 const MAX_ATTEMPTS = 5;
 const RATE_LIMIT = 0.3 * 60 * 1000; // 1 minutes
@@ -304,6 +364,67 @@ app.post('/send_code_createacc', async (req, res) => {
     );
 
     await sendRegistrationCode(email, code); //call function to send email
+
+    return res.status(200).json({ message: 'Verification code sent' });
+  } catch (error) {
+    console.error('Datbase error:', error.message);
+    return res.status(500).json({ error: 'Failed to send verification code' });
+  }
+});
+
+// send bind with email-password verification code (with check email)
+app.post('/send_code_trashrack_bind', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  const checkEmail = await pool.query(`
+    SELECT 'customer' AS table_name FROM customer WHERE cus_email = $1
+    UNION ALL
+    SELECT 'employee' AS table_name FROM employee WHERE emp_email = $1
+  `, [email]);
+
+  if (checkEmail.rows.length === 0) {
+    return res.status(400).json({ error: 'No associated account with this email!' });
+  }
+
+
+
+  if (emailLimitCache[email] && Date.now() - emailLimitCache[email] < RATE_LIMIT) {
+    console.error('Too many requests. Please try again later.'); // check code in CMD
+
+    const timeremain = (60000 - (emailLimitCache[email] && Date.now() - emailLimitCache[email]));
+    return res.status(429).json({ error: 'Too many requests. Please try again later.', timeremain: timeremain });// Pass remaining time
+  }
+
+  emailLimitCache[email] = Date.now();
+
+  const checkExistingCode = await pool.query(`
+    SELECT * FROM email_verification WHERE email = $1
+  `, [email]);
+
+  if (checkExistingCode.rows.length > 0) {
+    await pool.query(
+      'DELETE FROM email_verification WHERE email = $1',
+      [email]
+    );
+  }
+
+  //code genreratd
+  const code = generateRandomCode();
+  console.error(code); // check code in CMD
+  const expiration = Date.now() + 5 * 60 * 1000; // 5 minutes
+  const hashedCode = hashPassword(code);
+
+  try {
+    await pool.query(
+      'INSERT INTO email_verification (email, email_code, email_expire) VALUES ($1, $2, $3)',
+      [email, hashedCode, expiration]
+    );
+
+    await sendBindTrashtrackCode(email, code); //call function to send email
 
     return res.status(200).json({ message: 'Verification code sent' });
   } catch (error) {
@@ -587,7 +708,7 @@ app.post('/signup_google', async (req, res) => {
         email,
         'Active',                 // cus_status
         'Non-Contractual',         // cus_type
-        'google',                  // cus_auth_method
+        'GOOGLE',                  // cus_auth_method
         photoBytes,                // cus_profile (converted base64 image)
         contact,
         province,
@@ -636,7 +757,7 @@ app.post('/signup', async (req, res) => {
       [
         fname, mname, lname, email, hashedPassword,
         contact, province, city, brgy, street, postal,
-        'Active', 'Non-Contractual', 'email_password'
+        'Active', 'Non-Contractual', 'TRASHTRACK'
       ]
     );
 
@@ -744,7 +865,7 @@ app.post('/login', async (req, res) => {
       const authType = customer.cus_auth_method;
       const status = customer.cus_status;
 
-      if (authType == 'google') {
+      if (authType == 'GOOGLE') {
         return res.status(402).json({ message: 'Looks like this account is signed up with google. Please login with google' });
       }
 
@@ -795,7 +916,7 @@ app.post('/login', async (req, res) => {
       const authType = employee.emp_auth_method;
       const status = employee.emp_status;
 
-      if (authType == 'google') {
+      if (authType == 'GOOGLE') {
         return res.status(402).json({ message: 'Looks like this account is signed up with google. Please login with google' });
       }
 
@@ -998,8 +1119,8 @@ app.post('/login_google', async (req, res) => {
       const authType = customer.cus_auth_method;
       const status = customer.cus_status;
 
-      if (authType == 'email_password') {
-        return res.status(402).json({ message: 'Looks like this account is registered with email and password. Please log in using your email and password.' });
+      if (authType == 'TRASHTRACK') {
+        return res.status(402).json({ message: 'Looks like this account is not registered with Google. Please log in using your email and password.' });
       }
       if (status == 'Deactivated') {
         return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
@@ -1037,8 +1158,8 @@ app.post('/login_google', async (req, res) => {
       const authType = employee.emp_auth_method;
       const status = employee.emp_status;
 
-      if (authType == 'email_password') {
-        return res.status(402).json({ message: 'Looks like this account is registered with email and password. Please log in using your email and password.' });
+      if (authType == 'TRASHTRACK') {
+        return res.status(402).json({ message: 'Looks like this account is not registered with google. Please log in using your email and password.' });
       }
       if (status == 'Deactivated') {
         return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
@@ -1622,6 +1743,128 @@ app.post('/booking_cancel', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+// Update password and auth method
+app.post('/binding_trashtrack', authenticateToken, async (req, res) => {
+  const id = req.user.id; // Get the user ID from the token
+  const { password } = req.body; // Assuming the password is sent in the request body
+
+  try {
+    // Check if the email belongs to an employee or a customer
+    const userCheck = await pool.query(
+      `SELECT cus_email, emp_email FROM CUSTOMER 
+      LEFT JOIN EMPLOYEE ON CUSTOMER.cus_email = EMPLOYEE.emp_email 
+      WHERE cus_id = $1 OR emp_id = $1`,
+      [id]
+    );
+
+    if (userCheck.rowCount === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Determine if the user is an employee or a customer
+    const user = userCheck.rows[0];
+    let updateQuery, params;
+
+    if (user.emp_email) {
+      // Update employee password and auth method
+      const hashedPassword = hashPassword(password);
+      updateQuery = `UPDATE EMPLOYEE 
+                     SET emp_password = $1, emp_auth_method = 'TRASHTRACK_GOOGLE' 
+                     WHERE emp_email = $2 RETURNING *`;
+      params = [hashedPassword, user.emp_email];
+    } else {
+      // Update customer password and auth method
+      const hashedPassword = hashPassword(password);
+      updateQuery = `UPDATE CUSTOMER 
+                     SET cus_password = $1, cus_auth_method = 'TRASHTRACK_GOOGLE' 
+                     WHERE cus_id = $2 RETURNING *`;
+      params = [hashedPassword, id];
+    }
+
+    // Execute the update query
+    const result = await pool.query(updateQuery, params);
+
+    // Check if the update was successful
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    return res.status(200).json({ message: 'Success' });
+  } catch (error) {
+    console.error('Error updating user:', error.message); // Show debug print on server cmd
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Update email and auth method
+app.post('/binding_google', authenticateToken, async (req, res) => {
+  const id = req.user.id; // Get the user ID from the token
+  const { email } = req.body; // Assuming the email is sent in the request body
+
+  try {
+    // Check if the email belongs to an employee or a customer
+    const userCheck = await pool.query(
+      `SELECT cus_email, emp_email, cus_id, emp_id FROM CUSTOMER 
+      LEFT JOIN EMPLOYEE ON CUSTOMER.cus_email = EMPLOYEE.emp_email 
+      WHERE cus_id = $1 OR emp_id = $1`,
+      [id]
+    );
+
+    if (userCheck.rowCount === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Determine if the user is an employee or a customer
+    const user = userCheck.rows[0];
+    let updateQuery, params, tokenUser;
+
+    if (user.emp_email) {
+      // Update employee email and auth method
+      updateQuery = `UPDATE EMPLOYEE 
+                     SET emp_email = $1, emp_auth_method = 'TRASHTRACK_GOOGLE' 
+                     WHERE emp_id = $2 RETURNING *`;
+      params = [email, id];
+
+      // Store employee data in the token
+      tokenUser = { email: email, id: user.emp_id};
+
+    } else {
+      // Update customer email and auth method
+      updateQuery = `UPDATE CUSTOMER 
+                     SET cus_email = $1, cus_auth_method = 'TRASHTRACK_GOOGLE' 
+                     WHERE cus_id = $2 RETURNING *`;
+      params = [email, id];
+
+      // Store customer data in the token
+      tokenUser = { email: email, id: user.cus_id};
+    }
+
+    // Execute the update query
+    const result = await pool.query(updateQuery, params);
+
+    // Check if the update was successful
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Generate tokens for the updated user
+    const { accessToken, refreshToken } = generateTokens(tokenUser);
+
+    return res.status(200).json({
+      message: 'Email and authentication method updated successfully',
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      //user: result.rows[0]  // Optionally, return updated user info if needed
+    });
+
+  } catch (error) {
+    console.error('Error updating user:', error.message); // Show debug print on server cmd
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
 
 
 //////PAYMENT////////////////////////////////////////////////////////////////////////////
