@@ -1797,6 +1797,71 @@ app.post('/binding_trashtrack', authenticateToken, async (req, res) => {
   }
 });
 
+// change password
+app.post('/change_password', authenticateToken, async (req, res) => {
+  const email = req.user.email;
+  const { newPassword } = req.body;
+
+  try {
+    // Check if the email exists in the 'customer' table
+    const checkCustomerEmail = await pool.query(
+      'SELECT cus_password FROM CUSTOMER WHERE cus_email = $1',
+      [email]
+    );
+
+    if (checkCustomerEmail.rows.length > 0) {
+      const currentPassword = checkCustomerEmail.rows[0].cus_password;
+      const hashedNewPassword = hashPassword(newPassword);
+      // Check if the new password is the same as the current password
+      if (currentPassword === hashedNewPassword) {
+        return res.status(400).json('New password cannot be the same as the old password');
+      }
+
+      // Update the password if it is different
+      await pool.query(
+        'UPDATE CUSTOMER SET cus_password = $1 WHERE cus_email = $2',
+        [hashedNewPassword, email]
+      );
+
+      return res.status(200).json({ message: 'Password updated successfully for customer' });
+    }
+
+    // Check if the email exists in the 'employee' table
+    const checkEmployeeEmail = await pool.query(
+      `SELECT e.emp_password 
+       FROM employee e
+       JOIN roles r ON e.role_id = r.role_id
+       WHERE e.emp_email = $1 AND r.role_name = 'Hauler'`,
+      [email]
+    );
+
+    if (checkEmployeeEmail.rows.length > 0) {
+      const currentPassword = checkEmployeeEmail.rows[0].emp_password;
+      const hashedNewPassword = hashPassword(newPassword);
+
+      // Check if the new password is the same as the current password
+      if (currentPassword === hashedNewPassword) {
+        return res.status(400).json('New password cannot be the same as the old password');
+      }
+
+      // Update the password if it is different
+      await pool.query(
+        'UPDATE employee SET emp_password = $1 WHERE emp_email = $2',
+        [hashedNewPassword, email]
+      );
+
+      return res.status(200).json({ message: 'Password updated successfully for employee' });
+    }
+
+    // If email not found in either table
+    return res.status(404).json({ error: 'Email address not found in customer or employee tables' });
+  }
+  catch (error) {
+    console.error('Error during password update:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // Update email and auth method
 app.post('/binding_google', authenticateToken, async (req, res) => {
   const id = req.user.id; // Get the user ID from the token
@@ -1827,7 +1892,7 @@ app.post('/binding_google', authenticateToken, async (req, res) => {
       params = [email, id];
 
       // Store employee data in the token
-      tokenUser = { email: email, id: user.emp_id};
+      tokenUser = { email: email, id: user.emp_id };
 
     } else {
       // Update customer email and auth method
@@ -1837,7 +1902,7 @@ app.post('/binding_google', authenticateToken, async (req, res) => {
       params = [email, id];
 
       // Store customer data in the token
-      tokenUser = { email: email, id: user.cus_id};
+      tokenUser = { email: email, id: user.cus_id };
     }
 
     // Execute the update query
