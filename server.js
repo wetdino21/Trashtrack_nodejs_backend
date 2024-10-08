@@ -2,6 +2,12 @@
 
 const express = require('express');
 const path = require('path');
+
+const WebSocket = require('ws');
+const url = require('url');
+// Store WebSocket connections mapped by userId
+const userConnections = {};
+
 const { Pool } = require('pg');
 const bodyParser = require('body-parser');
 const cors = require('cors');
@@ -30,6 +36,7 @@ const port = 3000;
 const networkLink = `http://192.168.254.187:${port}`;
 
 
+const wss = new WebSocket.Server({ port: 8080 });
 // PostgreSQL connection
 const pool = new Pool({
   user: 'postgres',
@@ -98,6 +105,174 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
+
+//websocket
+// wss.on('connection', (ws, req) => {
+//   // Extract the userId from the query string
+//   const query = url.parse(req.url, true).query;
+//   const userId = query.userId;
+
+//   if (userId) {
+//     // Store the WebSocket connection for this userId
+//     userConnections[userId] = ws;
+//     console.log(`User ${userId} connected`);
+
+//     // Listen for messages from this user (optional)
+//     ws.on('message', (message) => {
+//       console.log(`Received message from ${userId}: ${message}`);
+//     });
+
+//     // Send a welcome message to the connected user
+//     ws.send(JSON.stringify({ message: `Welcome User ${userId}` }));
+
+//     // Handle WebSocket closing
+//     ws.on('close', () => {
+//       delete userConnections[userId]; // Remove user on disconnect
+//       console.log(`User ${userId} disconnected`);
+//     });
+//   } else {
+//     // If no userId is provided, close the connection
+//     ws.close();
+//   }
+// });
+
+// // Function to broadcast notifications to a specific user
+// function sendNotification(userId, notification) {
+//   const userWs = userConnections[userId];
+//   if (userWs && userWs.readyState === WebSocket.OPEN) {
+//     userWs.send(JSON.stringify(notification));
+//   }
+// }
+
+// // Simulate sending a notification to user 12345 after 5 seconds
+// setTimeout(() => {
+//   sendNotification('12345', { notif_message: 'You have a new message!' });
+// }, 5000);
+
+// Listen for PostgreSQL notifications
+pool.connect((err, client, done) => {
+  if (err) throw err;
+
+  client.on('notification', async (msg) => {
+    const notificationData = JSON.parse(msg.payload);
+    const userId = notificationData.cus_id;
+
+    // Get count of unread notifications for the user
+    try {
+      const countQuery = 'SELECT COUNT(*) FROM notification WHERE cus_id = $1 AND notif_read = false';
+      const result = await pool.query(countQuery, [userId]);
+      const unreadCount = result.rows[0].count;
+
+      console.log(`User ${userId} has ${unreadCount} unread notifications`);
+
+      // Send the unread count to the WebSocket client
+      const userWs = userConnections[userId];
+      if (userWs && userWs.readyState === WebSocket.OPEN) {
+        userWs.send(JSON.stringify({ unread_count: unreadCount }));
+      }
+    } catch (error) {
+      console.error('Error fetching unread notifications:', error);
+    }
+  });
+
+  // Subscribe to the PostgreSQL notification channel
+  client.query('LISTEN new_notification_channel');
+});
+
+// WebSocket connection handler
+wss.on('connection', (ws, req) => {
+  const query = url.parse(req.url, true).query;
+  const userId = query.userId;
+
+  if (userId) {
+    userConnections[userId] = ws;
+    console.log(`User ${userId} connected`);
+
+    ws.send(JSON.stringify({ message: `Welcome User ${userId}` }));
+
+    ws.on('close', () => {
+      delete userConnections[userId];
+      console.log(`User ${userId} disconnected`);
+    });
+  } else {
+    ws.close();
+  }
+});
+
+// Optional: Handle WebSocket server errors
+wss.on('error', (error) => {
+  console.error('WebSocket error:', error);
+});
+
+///////////////////////////////////////////
+//for single message
+// wss.on('connection', (ws) => {
+//   console.log('User connected to WebSocket');
+
+//   // Listen for PostgreSQL notifications
+//   pool.connect((err, client, done) => {
+//     if (err) throw err;
+
+//     client.on('notification', (msg) => {
+//       // Parse the notification message
+//       const notificationData = JSON.parse(msg.payload);
+//       console.log('New notification received:', notificationData);
+      
+//       // Send the notification to the WebSocket client
+//       ws.send(JSON.stringify(notificationData));
+//     });
+
+//     // Subscribe to the notifications channel
+//     client.query('LISTEN new_notification_channel');
+    
+//     // Cleanup on disconnect
+//     ws.on('close', () => {
+//       done(); // Release the client back to the pool
+//       console.log('User disconnected');
+//     });
+//   });
+// });
+
+// // Optional: Add error handling for WebSocket connections
+// wss.on('error', (error) => {
+//   console.error('WebSocket error:', error);
+// });
+
+//////////////////////////////////////////////
+//for messaging
+// wss.on('connection', (ws) => {
+//   console.log('User connected to WebSocket');
+
+//   // Periodically check for new notifications
+//   const intervalId = setInterval(async () => {
+//     pool.connect();
+//     try {
+//       // Query the database to check for new notifications for the user
+//       const res = await pool.query(`
+//         SELECT notif_message FROM notification WHERE cus_id = $1 AND notif_read = false`,
+//         [1013] // Replace with your logic to get the current user's ID
+//       );
+//       if (res.rows.length > 0) {
+//         console.log('Sending notifications:');
+//         ws.send(JSON.stringify(res.rows)); // Send the unread notifications
+//       } else {
+//         console.log('no update');
+//       }
+//     } catch (error) {
+//       console.error('Error querying notifications:', error);
+//     }
+//     // finally {
+//     //   pool.release(); // Release the client back to the pool
+//     // }
+//   }, 3000);
+
+//   // Clean up on disconnect
+//   ws.on('close', () => {
+//     clearInterval(intervalId);
+//     console.log('User disconnected');
+//   });
+// });
+
 
 // send code Email 
 async function sendRegistrationCode(to, code) {
