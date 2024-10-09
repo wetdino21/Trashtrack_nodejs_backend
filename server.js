@@ -217,14 +217,14 @@ wss.on('error', (error) => {
 //       // Parse the notification message
 //       const notificationData = JSON.parse(msg.payload);
 //       console.log('New notification received:', notificationData);
-      
+
 //       // Send the notification to the WebSocket client
 //       ws.send(JSON.stringify(notificationData));
 //     });
 
 //     // Subscribe to the notifications channel
 //     client.query('LISTEN new_notification_channel');
-    
+
 //     // Cleanup on disconnect
 //     ws.on('close', () => {
 //       done(); // Release the client back to the pool
@@ -1052,24 +1052,29 @@ app.post('/login', async (req, res) => {
       // Compare the hashed password with the stored hashed password
       if (hashedPassword === storedHashedPassword) {
         if (status == 'Deactivated') {
-          return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
+          return res.status(202).json({
+            email: email,
+            type: 'customer', message: 'Your Accoount is currently deactivated'
+          });
         }
         if (status == 'Suspended') {
           return res.status(203).json({ message: 'Your Accoount is currently suspended' });
         }
 
-        // Access the inserted row
-        const id = customer.cus_id;
+        if (status == 'Active') {
+          // Access the inserted row
+          const id = customer.cus_id;
 
-        // store user data to token
-        const user = { email: email, id: id };
+          // store user data to token
+          const user = { email: email, id: id };
 
-        const { accessToken, refreshToken } = generateTokens(user);
-        return res.status(200).json({
-          message: 'User found in customer',
-          accessToken: accessToken,
-          refreshToken: refreshToken
-        });
+          const { accessToken, refreshToken } = generateTokens(user);
+          return res.status(200).json({
+            message: 'User found in customer',
+            accessToken: accessToken,
+            refreshToken: refreshToken
+          });
+        }
       }
       return res.status(401).json({ error: 'Incorrect password' });
     }
@@ -1102,27 +1107,30 @@ app.post('/login', async (req, res) => {
       // Compare the hashed password with the stored hashed password
       if (hashedPassword === storedHashedPassword) {
         if (status == 'Deactivated') {
-          return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
+          return res.status(202).json({
+            email: email,
+            type: 'hauler', message: 'Your Accoount is currently deactivated'
+          });
         }
         if (status == 'Suspended') {
           return res.status(203).json({ message: 'Your Accoount is currently suspended' });
         }
+        if (status == 'Active') {
+          // Access the inserted row
+          const id = employee.emp_id;
 
-        // Access the inserted row
-        const id = employee.emp_id;
+          // store user data to token
+          const user = { email: email, id: id };
 
-        // store user data to token
-        const user = { email: email, id: id };
-
-        const { accessToken, refreshToken } = generateTokens(user);
-        // console.error('access: ' + accessToken);
-        // console.error('refresh: ' + refreshToken);
-        return res.status(201).json({
-          message: 'User found as Employee',
-          accessToken: accessToken,
-          refreshToken: refreshToken
-        });
-
+          const { accessToken, refreshToken } = generateTokens(user);
+          // console.error('access: ' + accessToken);
+          // console.error('refresh: ' + refreshToken);
+          return res.status(201).json({
+            message: 'User found as Employee',
+            accessToken: accessToken,
+            refreshToken: refreshToken
+          });
+        }
       }
       return res.status(401).json({ error: 'Incorrect password' });
     }
@@ -1298,22 +1306,28 @@ app.post('/login_google', async (req, res) => {
         return res.status(402).json({ message: 'Looks like this account is not registered with Google. Please log in using your email and password.' });
       }
       if (status == 'Deactivated') {
-        return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
+        return res.status(202).json({
+          email: email,
+          type: 'customer', message: 'Your Accoount is currently deactivated'
+        });
       }
       if (status == 'Suspended') {
         return res.status(203).json({ message: 'Your Accoount is currently suspended' });
       }
-      // Access the inserted row
-      const id = customer.cus_id;
+      if (status == 'Active') {
+        // Access the inserted row
+        const id = customer.cus_id;
 
-      // store user data to token
-      const user = { email: email, id: id };
-      const { accessToken, refreshToken } = generateTokens(user);
-      return res.status(200).json({
-        message: 'Successful google customer login',
-        accessToken: accessToken,
-        refreshToken: refreshToken
-      });
+        // store user data to token
+        const user = { email: email, id: id };
+        const { accessToken, refreshToken } = generateTokens(user);
+        return res.status(200).json({
+          message: 'Successful google customer login',
+          accessToken: accessToken,
+          refreshToken: refreshToken
+        });
+      }
+
       //return res.status(200).json({ message: 'User found in customer' });
     }
 
@@ -1337,24 +1351,30 @@ app.post('/login_google', async (req, res) => {
         return res.status(402).json({ message: 'Looks like this account is not registered with google. Please log in using your email and password.' });
       }
       if (status == 'Deactivated') {
-        return res.status(202).json({ message: 'Your Accoount is currently deactivated' });
+        return res.status(202).json({
+          email: email,
+          type: 'hauler', message: 'Your Accoount is currently deactivated'
+        });
       }
       if (status == 'Suspended') {
         return res.status(203).json({ message: 'Your Accoount is currently suspended' });
       }
-      // Access the inserted row
-      const id = employee.emp_id;
+      if (status == 'Active') {
+        // Access the inserted row
+        const id = employee.emp_id;
 
-      // store user data to token
-      const user = { email: email, id: id };
+        // store user data to token
+        const user = { email: email, id: id };
 
-      const { accessToken, refreshToken } = generateTokens(user);
-      console.log(accessToken + '' + refreshToken);
-      return res.status(201).json({
-        message: 'Successful google EMPLOYEE login',
-        accessToken: accessToken,
-        refreshToken: refreshToken
-      });
+        const { accessToken, refreshToken } = generateTokens(user);
+        console.log(accessToken + '' + refreshToken);
+        return res.status(201).json({
+          message: 'Successful google EMPLOYEE login',
+          accessToken: accessToken,
+          refreshToken: refreshToken
+        });
+      }
+
     }
 
     // If email not found in either table
@@ -1431,6 +1451,39 @@ app.post('/update_password', async (req, res) => {
   }
 });
 
+// reactivate acc
+app.post('/reactivate', async (req, res) => {
+  const { email, type } = req.body;
+  let success = false;
+  try {
+    if (type === 'customer') {
+      const result = await pool.query(
+        'UPDATE CUSTOMER SET cus_status = $1 WHERE cus_email = $2',
+        ['Active', email]
+      );
+      if (result.rowCount > 0) {
+        success = true;
+      }
+    } else if (type === 'hauler') {
+      const result = await pool.query(
+        'UPDATE EMPLOYEE SET emp_status = $1 WHERE emp_email = $2',
+        ['Active', email]
+      );
+      if (result.rowCount > 0) {
+        success = true;
+      }
+    }
+
+    if (success) {
+      return res.status(200).json({ message: 'Reactivated successfully' });
+    } else {
+      return res.status(400).json({ error: 'Unable to reactivate. Please check the email or account type.' });
+    }
+  } catch (error) {
+    console.error('Error during reactivation:', error.message);
+    res.status(500).json({ error: 'Database error occurred during reactivation' });
+  }
+});
 
 
 
