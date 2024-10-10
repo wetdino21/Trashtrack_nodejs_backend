@@ -106,48 +106,38 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-//websocket
-// wss.on('connection', (ws, req) => {
-//   // Extract the userId from the query string
-//   const query = url.parse(req.url, true).query;
-//   const userId = query.userId;
 
-//   if (userId) {
-//     // Store the WebSocket connection for this userId
-//     userConnections[userId] = ws;
-//     console.log(`User ${userId} connected`);
+// //websocket
+// wss.on('connection', (ws) => {
+//   console.log('Client connected');
 
-//     // Listen for messages from this user (optional)
-//     ws.on('message', (message) => {
-//       console.log(`Received message from ${userId}: ${message}`);
-//     });
+//   // Handle incoming messages from the client
+//   ws.on('message', (message) => {
+//     const parsedMessage = JSON.parse(message);
+//     switch (parsedMessage.type) {
+//       case 'chat':
+//         console.log('Received chat message:', parsedMessage.content);
+//         // Send a response to the client
+//         ws.send(JSON.stringify({ type: 'chat', content: 'Chat message received' }));
+//         break;
+//       case 'notification':
+//         console.log('Received notification message:', parsedMessage.content);
+//         ws.send(JSON.stringify({ type: 'notification', content: 'Notification received' }));
+//         break;
+//       case 'update':
+//         console.log('Received update message:', parsedMessage.content);
+//         ws.send(JSON.stringify({ type: 'update', content: 'Update received' }));
+//         break;
+//       default:
+//         ws.send(JSON.stringify({ type: 'error', content: 'Unknown message type' }));
+//     }
+//   });
 
-//     // Send a welcome message to the connected user
-//     ws.send(JSON.stringify({ message: `Welcome User ${userId}` }));
-
-//     // Handle WebSocket closing
-//     ws.on('close', () => {
-//       delete userConnections[userId]; // Remove user on disconnect
-//       console.log(`User ${userId} disconnected`);
-//     });
-//   } else {
-//     // If no userId is provided, close the connection
-//     ws.close();
-//   }
+//   // Handle client disconnection
+//   ws.on('close', () => {
+//     console.log('Client disconnected');
+//   });
 // });
-
-// // Function to broadcast notifications to a specific user
-// function sendNotification(userId, notification) {
-//   const userWs = userConnections[userId];
-//   if (userWs && userWs.readyState === WebSocket.OPEN) {
-//     userWs.send(JSON.stringify(notification));
-//   }
-// }
-
-// // Simulate sending a notification to user 12345 after 5 seconds
-// setTimeout(() => {
-//   sendNotification('12345', { notif_message: 'You have a new message!' });
-// }, 5000);
 
 // Listen for PostgreSQL notifications
 pool.connect((err, client, done) => {
@@ -204,74 +194,6 @@ wss.on('error', (error) => {
   console.error('WebSocket error:', error);
 });
 
-///////////////////////////////////////////
-//for single message
-// wss.on('connection', (ws) => {
-//   console.log('User connected to WebSocket');
-
-//   // Listen for PostgreSQL notifications
-//   pool.connect((err, client, done) => {
-//     if (err) throw err;
-
-//     client.on('notification', (msg) => {
-//       // Parse the notification message
-//       const notificationData = JSON.parse(msg.payload);
-//       console.log('New notification received:', notificationData);
-
-//       // Send the notification to the WebSocket client
-//       ws.send(JSON.stringify(notificationData));
-//     });
-
-//     // Subscribe to the notifications channel
-//     client.query('LISTEN new_notification_channel');
-
-//     // Cleanup on disconnect
-//     ws.on('close', () => {
-//       done(); // Release the client back to the pool
-//       console.log('User disconnected');
-//     });
-//   });
-// });
-
-// // Optional: Add error handling for WebSocket connections
-// wss.on('error', (error) => {
-//   console.error('WebSocket error:', error);
-// });
-
-//////////////////////////////////////////////
-//for messaging
-// wss.on('connection', (ws) => {
-//   console.log('User connected to WebSocket');
-
-//   // Periodically check for new notifications
-//   const intervalId = setInterval(async () => {
-//     pool.connect();
-//     try {
-//       // Query the database to check for new notifications for the user
-//       const res = await pool.query(`
-//         SELECT notif_message FROM notification WHERE cus_id = $1 AND notif_read = false`,
-//         [1013] // Replace with your logic to get the current user's ID
-//       );
-//       if (res.rows.length > 0) {
-//         console.log('Sending notifications:');
-//         ws.send(JSON.stringify(res.rows)); // Send the unread notifications
-//       } else {
-//         console.log('no update');
-//       }
-//     } catch (error) {
-//       console.error('Error querying notifications:', error);
-//     }
-//     // finally {
-//     //   pool.release(); // Release the client back to the pool
-//     // }
-//   }, 3000);
-
-//   // Clean up on disconnect
-//   ws.on('close', () => {
-//     clearInterval(intervalId);
-//     console.log('User disconnected');
-//   });
-// });
 
 
 // send code Email 
@@ -1619,7 +1541,7 @@ app.post('/deactivate', authenticateToken, async (req, res) => {
 
 ///////////CUSTOMER DATA ////////////////////////////////////////////////////////
 //FETCH ALL DATA 
-app.post('/customer/fetch_data', authenticateToken, async (req, res) => {
+app.post('/fetch_data', authenticateToken, async (req, res) => {
   const email = req.user.email;
 
   try {
