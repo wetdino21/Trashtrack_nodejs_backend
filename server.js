@@ -881,15 +881,20 @@ app.post('/signup', async (req, res) => {
 // Update account
 app.post('/user_update', authenticateToken, async (req, res) => {
   const id = req.user.id; // Get the user ID from the token
-  const { fname, mname, lname, email, photo, contact, province, city, brgy, street, postal } = req.body;
+  const emailToken = req.user.email;
+  const { fname, mname, lname, email, photo, contact, province, city, brgy, street, postal, address } = req.body;
 
   try {
     // Convert base64 string back to bytea
     const photoBytes = photo ? Buffer.from(photo, 'base64') : null;
 
-    // Update the customer record in the database
-    const result = await pool.query(
-      `UPDATE CUSTOMER
+    let checkEemail = await pool.query(
+      'SELECT CUS_EMAIL FROM CUSTOMER WHERE CUS_EMAIL = $1', [emailToken]
+    );
+    if (checkEemail.rows.length > 0) {
+      // Update the customer record in the database
+      const result = await pool.query(
+        `UPDATE CUSTOMER
       SET 
         cus_fname = $1, 
         cus_mname = $2, 
@@ -903,41 +908,82 @@ app.post('/user_update', authenticateToken, async (req, res) => {
         cus_street = $10, 
         cus_postal = $11
       WHERE cus_id = $12 RETURNING *`,
-      [
-        fname,
-        mname,
-        lname,
-        email,
-        photoBytes,
-        contact,
-        province,
-        city,
-        brgy,
-        street,
-        postal,
-        id
-      ]
-    );
+        [
+          fname,
+          mname,
+          lname,
+          email,
+          photoBytes,
+          contact,
+          province,
+          city,
+          brgy,
+          street,
+          postal,
+          id
+        ]
+      );
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'User not found' });
+      if (result.rowCount === 0) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      // Access the updated row
+      const updatedRow = result.rows[0];
+      const user = { email: updatedRow.cus_email, id: updatedRow.cus_id };
+      const { accessToken, refreshToken } = generateTokens(user);
+
+      return res.status(200).json({
+        message: 'User updated successfully',
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+      });
     }
 
-    // Access the updated row
-    const updatedRow = result.rows[0];
+    checkEemail = await pool.query(
+      'SELECT EMP_EMAIL FROM EMPLOYEE WHERE EMP_EMAIL = $1', [emailToken]
+    );
+    if (checkEemail.rows.length > 0) {
+      // Update the customer record in the database
+      const result = await pool.query(
+        `UPDATE EMPLOYEE
+      SET 
+        emp_fname = $1, 
+        emp_mname = $2, 
+        emp_lname = $3, 
+        emp_email = $4, 
+        emp_profile = $5,
+        emp_contact = $6, 
+        emp_address = $7
+      WHERE emp_id = $8 RETURNING *`,
+        [
+          fname,
+          mname,
+          lname,
+          email,
+          photoBytes,
+          contact,
+          address,
+          id
+        ]
+      );
 
-    // Store updated user data to token if necessary
-    const user = { email: updatedRow.cus_email, id: updatedRow.cus_id };
+      if (result.rowCount === 0) {
+        return res.status(404).json({ message: 'User not found' });
+      }
 
-    // Generate tokens if needed
-    const { accessToken, refreshToken } = generateTokens(user);
+      // Access the updated row
+      const updatedRow = result.rows[0];
+      const user = { email: updatedRow.emp_email, id: updatedRow.emp_id };
+      const { accessToken, refreshToken } = generateTokens(user);
 
-    return res.status(200).json({
-      message: 'User updated successfully',
-      accessToken: accessToken,
-      refreshToken: refreshToken,
-      //user: updatedRow         // Return the updated user information if needed
-    });
+      return res.status(200).json({
+        message: 'User updated successfully',
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+      });
+    }
+
   } catch (error) {
     console.error('Error updating user:', error.message); // Show debug print on server cmd
     res.status(500).json({ error: 'Database error' });
@@ -1047,7 +1093,7 @@ app.post('/login', async (req, res) => {
           const { accessToken, refreshToken } = generateTokens(user);
           // console.error('access: ' + accessToken);
           // console.error('refresh: ' + refreshToken);
-          return res.status(201).json({
+          return res.status(200).json({
             message: 'User found as Employee',
             accessToken: accessToken,
             refreshToken: refreshToken
@@ -1076,7 +1122,6 @@ app.post('/refresh_token', (req, res) => {
     if (err) {
       return res.status(403).json({ error: 'Token expired or invalid' });
     }
-    //console.log(user);
     // Generate new access token
     const userData = { email: user.email, id: user.id };
     const { accessToken } = generateNewAccessToken(userData);
@@ -1289,8 +1334,7 @@ app.post('/login_google', async (req, res) => {
         const user = { email: email, id: id };
 
         const { accessToken, refreshToken } = generateTokens(user);
-        console.log(accessToken + '' + refreshToken);
-        return res.status(201).json({
+        return res.status(200).json({
           message: 'Successful google EMPLOYEE login',
           accessToken: accessToken,
           refreshToken: refreshToken
@@ -1447,7 +1491,6 @@ app.post('/send_email', async (req, res) => {
     });
 
     res.status(200).json({ messageId: info.messageId });
-    //console.log('Email sent successfully');
   } catch (error) {
     console.error('Error sending email:', error.message);
     res.status(500).json({ error: 'Failed to send email' });
@@ -1488,7 +1531,6 @@ app.post('/send_email_forgotpass', async (req, res) => {
     });
 
     res.status(200).json({ messageId: info.messageId });
-    // console.log('Email sent successfully');
   } catch (error) {
     console.error('Error sending email:', error.message);
     res.status(500).json({ error: 'Failed to send email' });
@@ -1544,11 +1586,13 @@ app.post('/deactivate', authenticateToken, async (req, res) => {
 app.post('/fetch_data', authenticateToken, async (req, res) => {
   const email = req.user.email;
 
+  let userType = 'customer'; //for identity
   try {
     let result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
 
     // If not found in CUSTOMER table, check in the EMPLOYEE table
     if (result.rows.length === 0) {
+      userType = 'hauler'; //for identity
       result = await pool.query(`
         SELECT e.*, r.role_name 
         FROM EMPLOYEE e 
@@ -1573,15 +1617,14 @@ app.post('/fetch_data', authenticateToken, async (req, res) => {
       const responseData = {
         ...user,
         profileImage: base64Image,  // Add the base64-encoded image here
+        user: userType,
       };
-
       // Conditionally add `roleName` if it's an employee
       if (user.role_name) {
         responseData.emp_role = user.role_name;
       }
 
       // Log the base64 string (optional for debugging)
-      //console.log('Base64 Encoded Image:', base64Image);
 
       res.json(responseData);
     } else {
@@ -1624,7 +1667,6 @@ app.post('/customer/fetch_profile', authenticateToken, async (req, res) => {
       };
 
       // Log the base64 string (optional for debugging)
-      //console.log('Base64 Encoded Image:', base64Image);
 
       res.json(responseData);
     } else {
@@ -1894,53 +1936,89 @@ app.post('/booking_cancel', authenticateToken, async (req, res) => {
   }
 });
 
+//fetch booking all pending
+app.post('/fetch_pickup_booking', authenticateToken, async (req, res) => {
+  //const userId = req.user.id;  
+  
+  try {
+    const result = await pool.query(
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 ORDER BY bk_date ASC',
+      ['Pending']
+    );
+    if (result.rows.length > 0) {
+      // Extract all booking IDs (bk_id) for the user
+      const bookingIds = result.rows.map(booking => booking.bk_id);
+
+      // Fetch the booking waste for the user's booking IDs
+      const result2 = await pool.query(
+        'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
+        [bookingIds]
+      );
+      // Combine booking data and waste data into one response object
+      res.status(200).json({
+        booking: result.rows,
+        wasteTypes: result2.rows
+
+      });
+    } else {
+      res.status(404).json({ error: 'No bookings found' });
+    }
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // Update password and auth method
 app.post('/binding_trashtrack', authenticateToken, async (req, res) => {
   const id = req.user.id; // Get the user ID from the token
+  const email = req.user.email;
   const { password } = req.body; // Assuming the password is sent in the request body
+
+  // Update employee password and auth method
+  const hashedPassword = hashPassword(password);
 
   try {
     // Check if the email belongs to an employee or a customer
-    const userCheck = await pool.query(
-      `SELECT cus_email, emp_email FROM CUSTOMER 
-      LEFT JOIN EMPLOYEE ON CUSTOMER.cus_email = EMPLOYEE.emp_email 
-      WHERE cus_id = $1 OR emp_id = $1`,
-      [id]
+    let emailCheck = await pool.query(
+      `SELECT cus_email from CUSTOMER WHERE cus_email = $1`,
+      [email]
     );
 
-    if (userCheck.rowCount === 0) {
-      return res.status(404).json({ message: 'User not found' });
+    if (emailCheck.rows.length > 0) {
+      const result = await pool.query(
+        `UPDATE CUSTOMER 
+        SET cus_password = $1, cus_auth_method = 'TRASHTRACK_GOOGLE' 
+        WHERE cus_email = $2 RETURNING *`,
+        [hashedPassword, email]
+      );
+
+      if (result.rowCount > 0) {
+        return res.status(200).json({ message: 'Success' });
+      }
     }
 
-    // Determine if the user is an employee or a customer
-    const user = userCheck.rows[0];
-    let updateQuery, params;
+    //if hauler
+    emailCheck = await pool.query(
+      `SELECT emp_email from EMPLOYEE WHERE emp_email = $1`,
+      [email]
+    );
 
-    if (user.emp_email) {
-      // Update employee password and auth method
-      const hashedPassword = hashPassword(password);
-      updateQuery = `UPDATE EMPLOYEE 
-                     SET emp_password = $1, emp_auth_method = 'TRASHTRACK_GOOGLE' 
-                     WHERE emp_email = $2 RETURNING *`;
-      params = [hashedPassword, user.emp_email];
-    } else {
-      // Update customer password and auth method
-      const hashedPassword = hashPassword(password);
-      updateQuery = `UPDATE CUSTOMER 
-                     SET cus_password = $1, cus_auth_method = 'TRASHTRACK_GOOGLE' 
-                     WHERE cus_id = $2 RETURNING *`;
-      params = [hashedPassword, id];
+    if (emailCheck.rows.length > 0) {
+      const result = await pool.query(
+        `UPDATE EMPLOYEE 
+         SET emp_password = $1, emp_auth_method = 'TRASHTRACK_GOOGLE' 
+         WHERE emp_email = $2 RETURNING *`,
+        [hashedPassword, email]
+      );
+
+      if (result.rowCount > 0) {
+        return res.status(200).json({ message: 'Success' });
+      }
     }
 
-    // Execute the update query
-    const result = await pool.query(updateQuery, params);
+    return res.status(404).json({ message: 'User not found' });
 
-    // Check if the update was successful
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    return res.status(200).json({ message: 'Success' });
   } catch (error) {
     console.error('Error updating user:', error.message); // Show debug print on server cmd
     res.status(500).json({ error: 'Database error' });
@@ -2015,63 +2093,66 @@ app.post('/change_password', authenticateToken, async (req, res) => {
 // Update email and auth method
 app.post('/binding_google', authenticateToken, async (req, res) => {
   const id = req.user.id; // Get the user ID from the token
+  const emailToken = req.user.email;
   const { email } = req.body; // Assuming the email is sent in the request body
 
   try {
     // Check if the email belongs to an employee or a customer
-    const userCheck = await pool.query(
-      `SELECT cus_email, emp_email, cus_id, emp_id FROM CUSTOMER 
-      LEFT JOIN EMPLOYEE ON CUSTOMER.cus_email = EMPLOYEE.emp_email 
-      WHERE cus_id = $1 OR emp_id = $1`,
-      [id]
+    let emailCheck = await pool.query(
+      `SELECT cus_email from CUSTOMER WHERE cus_email = $1`,
+      [emailToken]
     );
 
-    if (userCheck.rowCount === 0) {
-      return res.status(404).json({ message: 'User not found' });
+    if (emailCheck.rows.length > 0) {
+      const result = await pool.query(
+        `UPDATE CUSTOMER 
+        SET cus_email = $1, cus_auth_method = 'TRASHTRACK_GOOGLE' 
+        WHERE cus_email = $2 RETURNING *`,
+        [email, emailToken]
+      );
+
+      if (result.rowCount > 0) {
+        // store user data to token
+        const user = { email: email, id: id };
+
+        const { accessToken, refreshToken } = generateTokens(user);
+        return res.status(200).json({
+          message: 'User found in customer',
+          accessToken: accessToken,
+          refreshToken: refreshToken
+        });
+      }
     }
 
-    // Determine if the user is an employee or a customer
-    const user = userCheck.rows[0];
-    let updateQuery, params, tokenUser;
+    //if hauler
+    emailCheck = await pool.query(
+      `SELECT emp_email from EMPLOYEE WHERE emp_email = $1`,
+      [emailToken]
+    );
 
-    if (user.emp_email) {
-      // Update employee email and auth method
-      updateQuery = `UPDATE EMPLOYEE 
-                     SET emp_email = $1, emp_auth_method = 'TRASHTRACK_GOOGLE' 
-                     WHERE emp_id = $2 RETURNING *`;
-      params = [email, id];
+    if (emailCheck.rows.length > 0) {
+      const result = await pool.query(
+        `UPDATE EMPLOYEE 
+         SET emp_email = $1, emp_auth_method = 'TRASHTRACK_GOOGLE' 
+         WHERE emp_email = $2 RETURNING *`,
+        [email, emailToken]
+      );
 
-      // Store employee data in the token
-      tokenUser = { email: email, id: user.emp_id };
+      if (result.rowCount > 0) {
+        console.log('sucess bind');
+        // store user data to token
+        const user = { email: email, id: id };
 
-    } else {
-      // Update customer email and auth method
-      updateQuery = `UPDATE CUSTOMER 
-                     SET cus_email = $1, cus_auth_method = 'TRASHTRACK_GOOGLE' 
-                     WHERE cus_id = $2 RETURNING *`;
-      params = [email, id];
-
-      // Store customer data in the token
-      tokenUser = { email: email, id: user.cus_id };
+        const { accessToken, refreshToken } = generateTokens(user);
+        return res.status(200).json({
+          message: 'User found in customer',
+          accessToken: accessToken,
+          refreshToken: refreshToken
+        });
+      }
     }
 
-    // Execute the update query
-    const result = await pool.query(updateQuery, params);
-
-    // Check if the update was successful
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // Generate tokens for the updated user
-    const { accessToken, refreshToken } = generateTokens(tokenUser);
-
-    return res.status(200).json({
-      message: 'Email and authentication method updated successfully',
-      accessToken: accessToken,
-      refreshToken: refreshToken,
-      //user: result.rows[0]  // Optionally, return updated user info if needed
-    });
+    return res.status(404).json({ message: 'User not found' });
 
   } catch (error) {
     console.error('Error updating user:', error.message); // Show debug print on server cmd
