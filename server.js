@@ -1712,7 +1712,8 @@ app.post('/booking', authenticateToken, async (req, res) => {
   const id = req.user.id;
 
   const {
-    date,
+    fullname,
+    contact,
     province,
     city,
     brgy,
@@ -1720,18 +1721,20 @@ app.post('/booking', authenticateToken, async (req, res) => {
     postal,
     latitude,
     longitude,
+    date,
     wasteTypes  // list
   } = req.body;
 
   try {
     const query = `
-      INSERT INTO booking (bk_date, bk_province, bk_city, bk_brgy, bk_street, bk_postal, bk_latitude, bk_longitude, cus_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      INSERT INTO booking (bk_fullname, bk_contact, bk_province, bk_city, bk_brgy, bk_street, bk_postal, bk_latitude, bk_longitude, bk_date, cus_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING bk_id;  -- Return the id of the newly inserted booking
     `;
 
     const result = await pool.query(query, [
-      date,
+      fullname,
+      contact,
       province,
       city,
       brgy,
@@ -1739,6 +1742,7 @@ app.post('/booking', authenticateToken, async (req, res) => {
       postal,
       latitude,
       longitude,
+      date,
       id
     ]);
 
@@ -1822,7 +1826,8 @@ app.post('/booking_update', authenticateToken, async (req, res) => {
 
   const {
     bookingId,  // Pass this in the request to update an existing booking
-    date,
+    fullname,
+    contact,
     province,
     city,
     brgy,
@@ -1830,10 +1835,22 @@ app.post('/booking_update', authenticateToken, async (req, res) => {
     postal,
     latitude,
     longitude,
-    wasteTypes  // List of new waste types
+    date,
+    wasteTypes  // list
   } = req.body;
 
   try {
+    const result = await pool.query(
+      'SELECT bk_status FROM booking WHERE bk_status != $1 AND bk_id = $2',
+      ['Pending', bookingId]
+    );
+
+    if (result.rows.length > 0) {
+      //was already onging no update
+      return res.status(409).json({ message: 'Booking cannot be updated as it is no longer pending.' });
+    }
+
+    //if still pending
     const client = await pool.connect();
 
     try {
@@ -1843,13 +1860,14 @@ app.post('/booking_update', authenticateToken, async (req, res) => {
       // Step 1: Update the booking details
       const updateBookingQuery = `
         UPDATE booking 
-        SET bk_date = $1, bk_province = $2, bk_city = $3, bk_brgy = $4, bk_street = $5, bk_postal = $6, bk_latitude = $7, bk_longitude = $8 
-        WHERE bk_id = $9 AND cus_id = $10
+        SET  bk_fullname = $1, bk_contact = $2, bk_province = $3, bk_city = $4, bk_brgy = $5, bk_street = $6, bk_postal = $7, bk_latitude = $8, bk_longitude = $9, bk_date = $10
+        WHERE bk_id = $11 AND cus_id = $12
         RETURNING bk_id;
       `;
 
       const result = await client.query(updateBookingQuery, [
-        date,
+        fullname,
+        contact,
         province,
         city,
         brgy,
@@ -1857,8 +1875,9 @@ app.post('/booking_update', authenticateToken, async (req, res) => {
         postal,
         latitude,
         longitude,
+        date,
         bookingId,
-        id  // Check that the booking belongs to the authenticated user
+        id
       ]);
 
       if (result.rows.length === 0) {
@@ -1939,7 +1958,7 @@ app.post('/booking_cancel', authenticateToken, async (req, res) => {
 //fetch booking all pending
 app.post('/fetch_pickup_booking', authenticateToken, async (req, res) => {
   //const userId = req.user.id;  
-  
+
   try {
     const result = await pool.query(
       'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 ORDER BY bk_date ASC',
