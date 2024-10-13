@@ -1820,6 +1820,34 @@ app.post('/fetch_booking', authenticateToken, async (req, res) => {
   }
 });
 
+//fetch booking data
+app.post('/fetch_booking_details', authenticateToken, async (req, res) => {
+  const { bookID } = req.body;
+  try {
+    const result = await pool.query(
+      'SELECT * FROM booking WHERE bk_id = $1',
+      [bookID]
+    );
+
+    if (result.rows.length > 0) {
+      const result2 = await pool.query(
+        'SELECT * FROM booking_waste WHERE bk_id = $1',
+        [bookID]
+      );
+      res.status(200).json({
+        booking: result.rows,
+        wasteTypes: result2.rows
+
+      });
+    } else {
+      res.status(404).json({ error: 'No bookings found' });
+    }
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 //update booking
 app.post('/booking_update', authenticateToken, async (req, res) => {
   const id = req.user.id;
@@ -1935,6 +1963,16 @@ app.post('/booking_cancel', authenticateToken, async (req, res) => {
   } = req.body;
 
   try {
+    const resultOnging = await pool.query(
+      'SELECT bk_status FROM booking WHERE bk_status != $1 AND bk_id = $2',
+      ['Pending', bookingId]
+    );
+
+    if (resultOnging.rows.length > 0) {
+      return res.status(409).json({ message: 'Booking cannot be cancel as it is no longer pending.' });
+    }
+
+    //if still pending
     const query =
       'UPDATE booking SET bk_status = \'Cancelled\' WHERE cus_id = $1 AND bk_id = $2 RETURNING *';
 
@@ -1987,6 +2025,116 @@ app.post('/fetch_pickup_booking', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+//accept booking
+app.post('/accept_booking', authenticateToken, async (req, res) => {
+  const userID = req.user.id;
+  const { bookID, haulLat, haulLong } = req.body;
+  try {
+    const resultPending = await pool.query(
+      'SELECT bk_status FROM booking WHERE bk_status = $1 AND bk_id = $2',
+      ['Pending', bookID]
+    );
+    if (resultPending.rows.length === 0) {
+      return res.status(409).json({ message: 'Already accepted from other' });
+    }
+    //if still pending
+    const result = await pool.query(
+      'UPDATE BOOKING SET bk_status = $1, bk_haul_lat = $2, bk_haul_long = $3, emp_id = $4 WHERE bk_id = $5',
+      ['Ongoing', haulLat, haulLong, userID, bookID]
+    );
+    if (result.rowCount > 0) {
+      res.status(200).json({ message: 'Accepted booking' });
+    } else {
+      res.status(404).json({ error: 'No bookings found' });
+    }
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//fetch current all pickup
+app.post('/fetch_current_pickup', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const result = await pool.query(
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND emp_id = $2 ORDER BY bk_date ASC',
+      ['Ongoing', userId]
+    );
+    if (result.rows.length > 0) {
+      // Extract all booking IDs (bk_id) for the user
+      const bookingIds = result.rows.map(booking => booking.bk_id);
+
+      // Fetch the booking waste for the user's booking IDs
+      const result2 = await pool.query(
+        'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
+        [bookingIds]
+      );
+      // Combine booking data and waste data into one response object
+      res.status(200).json({
+        booking: result.rows,
+        wasteTypes: result2.rows
+
+      });
+    } else {
+      res.status(404).json({ error: 'No bookings found' });
+    }
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Fetch haul latitude longitude
+app.post('/fetch_all_latlong', authenticateToken, async (req, res) => {
+  const { bookID } = req.body;
+
+  try {
+    const result = await pool.query(
+      'SELECT bk_haul_lat, bk_haul_long, bk_latitude, bk_longitude FROM BOOKING WHERE bk_id = $1',
+      [bookID]
+    );
+
+    if (result.rows.length > 0) {
+      const { bk_haul_lat, bk_haul_long, bk_latitude, bk_longitude } = result.rows[0]; // Get the first row of results
+      return res.status(200).json({
+        haul_lat: bk_haul_lat,
+        haul_long: bk_haul_long,
+        cus_lat: bk_latitude,
+        cus_long: bk_longitude,
+      });
+    } else {
+      return res.status(404).json({ error: 'No bookings found' });
+    }
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// update haul latitude longitude
+app.post('/update_haul_latlong', authenticateToken, async (req, res) => {
+  const { bookID, lat, long } = req.body;
+
+  try {
+    const result = await pool.query(
+      'UPDATE booking SET bk_haul_lat = $1, bk_haul_long = $2 WHERE bk_id = $3 AND bk_status = $4',
+      [lat, long, bookID, 'Ongoing']
+    );
+
+    if (result.rowCount > 0) {
+      return res.status(200).json();
+    } else {
+      return res.status(404).json({ error: 'No bookings found' });
+    }
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
 
 // Update password and auth method
 app.post('/binding_trashtrack', authenticateToken, async (req, res) => {
