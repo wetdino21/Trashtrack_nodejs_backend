@@ -1579,6 +1579,71 @@ app.post('/deactivate', authenticateToken, async (req, res) => {
   }
 });
 
+//arrive notif
+app.post('/arrival_notif', authenticateToken, async (req, res) => {
+  const id = req.user.id;
+  const { bk_id } = req.body;
+
+  try {
+    const bookingResult = await pool.query('SELECT * FROM booking WHERE bk_id = $1', [bk_id]);
+
+    // Check if the booking exists
+    if (bookingResult.rows.length === 0) {
+      console.error('Booking not found');
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+
+    const booking = bookingResult.rows[0];
+
+    const fullAddress = `${booking.bk_street}, ${booking.bk_brgy}, ${booking.bk_city}, ${booking.bk_province}, ${booking.bk_postal}`;
+    const pickupDateOnly = new Date(booking.bk_date).toLocaleDateString(); // Extract only the date part
+    const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); // Format current time to HH:MM
+
+    const message = `Waste Pickup Driver has arrived.\n\n` +
+      `Dear ${booking.bk_fullname},\n\n` +
+      `We are pleased to inform you that the truck has arrived at your pickup location!\n\n` +
+      `Pickup Location: ${fullAddress}\n` +
+      `Date: ${pickupDateOnly}  ${currentTime}\n\n` +
+      `Please be prepared for waste collection at your designated spot. Ensure that all waste for collection is accessible and ready for pickup.\n\n` +
+      `Thank you for your cooperation!\n\nBest regards,\nTrashTrack Team`;
+
+    const notificationResult = await pool.query(
+      'INSERT INTO notification (notif_message, emp_id, cus_id) VALUES ($1, $2, $3) RETURNING *',
+      [message, id, booking.cus_id]
+    );
+
+    res.json({ notification: notificationResult.rows[0] });
+  } catch (error) {
+    console.error('Error handling arrival notification:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//read notification
+app.post('/read_notification', authenticateToken, async (req, res) => {
+  const { notif_id } = req.body;
+
+  try {
+    await pool.query('UPDATE NOTIFICATION SET notif_read = $1 WHERE notif_id = $2', [true, notif_id]);
+    res.json();
+  } catch (error) {
+    console.error('Error handling arrival notification:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//total request
+app.post('/total_pickup_request', authenticateToken, async (req, res) => {
+  const id = req.user.id;
+  try {
+    const result = await pool.query('SELECT COUNT(CUS_ID) AS total FROM BOOKING WHERE cus_id = $1', [id]);
+    console.log(result.rows[0].total);
+    res.json({ total: result.rows[0].total }); // Access the total count
+  } catch (error) {
+    console.error('Error handling total request:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 
 
 ///////////CUSTOMER DATA ////////////////////////////////////////////////////////
@@ -1638,7 +1703,7 @@ app.post('/fetch_data', authenticateToken, async (req, res) => {
 });
 
 //fetch profile
-app.post('/customer/fetch_profile', authenticateToken, async (req, res) => {
+app.post('/fetch_profile', authenticateToken, async (req, res) => {
   const email = req.user.email;
 
   try {
@@ -2055,37 +2120,106 @@ app.post('/accept_booking', authenticateToken, async (req, res) => {
 });
 
 //fetch current all pickup
-app.post('/fetch_current_pickup', authenticateToken, async (req, res) => {
+app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
   const userId = req.user.id;
 
   try {
-    const result = await pool.query(
+    // Fetch current bookings
+    const resultCurrent = await pool.query(
       'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND emp_id = $2 ORDER BY bk_date ASC',
       ['Ongoing', userId]
     );
-    if (result.rows.length > 0) {
-      // Extract all booking IDs (bk_id) for the user
-      const bookingIds = result.rows.map(booking => booking.bk_id);
 
-      // Fetch the booking waste for the user's booking IDs
-      const result2 = await pool.query(
+    // Extract all current booking IDs (bk_id)
+    const bookingCurrentIds = resultCurrent.rows.map(booking => booking.bk_id);
+
+    // Fetch the waste types for current bookings (if any)
+    let resultCurrentWaste = { rows: [] };
+    if (bookingCurrentIds.length > 0) {
+      resultCurrentWaste = await pool.query(
         'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
-        [bookingIds]
+        [bookingCurrentIds]
       );
-      // Combine booking data and waste data into one response object
-      res.status(200).json({
-        booking: result.rows,
-        wasteTypes: result2.rows
-
-      });
-    } else {
-      res.status(404).json({ error: 'No bookings found' });
     }
+
+    // Fetch historical bookings
+    const resultHistory = await pool.query(
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE (bk_status != $1 AND bk_status != $2 AND bk_status != $3) AND emp_id = $4 ORDER BY bk_date ASC',
+      ['Pending', 'Ongoing', 'Cancelled', userId]
+    );
+
+    // Extract all historical booking IDs (bk_id)
+    const bookingHistoryIds = resultHistory.rows.map(booking => booking.bk_id);
+
+    // Fetch the waste types for historical bookings (if any)
+    let resultHistoryWaste = { rows: [] };
+
+    if (bookingHistoryIds.length > 0) {
+      resultHistoryWaste = await pool.query(
+        'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
+        [bookingHistoryIds]
+      );
+    }
+
+    // Combine current and historical booking data into one response object
+    res.status(200).json({
+      booking: resultCurrent.rows,
+      wasteTypes: resultCurrentWaste.rows,
+      booking2: resultHistory.rows,
+      wasteTypes2: resultHistoryWaste.rows
+    });
   } catch (error) {
     console.error('Error fetching booking data:', error.message);
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+
+// app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
+//   const userId = req.user.id;
+
+//   try {
+//      //current
+//     const resultCurrent = await pool.query(
+//       'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND emp_id = $2 ORDER BY bk_date ASC',
+//       ['Ongoing', userId]
+//     );
+//     if (resultCurrent.rows.length > 0) {
+//       // Extract all booking IDs (bk_id) for the user
+//       const bookingCurrentIds = resultCurrent.rows.map(booking => booking.bk_id);
+
+//       // Fetch the booking waste for the user's booking IDs
+//       const resultCurrentWaste = await pool.query(
+//         'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
+//         [bookingCurrentIds]
+//       );
+
+//       //history
+//       const resultHistory = await pool.query(
+//         'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND emp_id = $2 ORDER BY bk_date ASC',
+//         ['Ongoing', userId]
+//       );
+//       if (resultHistory.rows.length > 0) {
+//         const bookingHistoryIds = resultCurrent.rows.map(booking => booking.bk_id);
+//         const resultHistoryWaste = await pool.query(
+//           'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
+//           [bookingHistoryIds]
+//         );
+//       }
+//       // Combine booking data and waste data into one response object
+//       res.status(200).json({
+//         booking: resultCurrent.rows,
+//         wasteTypes: resultCurrentWaste.rows
+
+//       });
+//     } else {
+//       res.status(404).json({ error: 'No bookings found' });
+//     }
+//   } catch (error) {
+//     console.error('Error fetching booking data:', error.message);
+//     res.status(500).json({ error: 'Database error' });
+//   }
+// });
 
 // Fetch haul latitude longitude
 app.post('/fetch_all_latlong', authenticateToken, async (req, res) => {
