@@ -2525,58 +2525,11 @@ if (!PAYMONGO_SECRET_KEY) {
 }
 const encodedSecretKey = Buffer.from(PAYMONGO_SECRET_KEY).toString('base64');
 
-// Route to create a PayMongo payment link
-app.post('/payment_link', authenticateToken, async (req, res) => {
-  const { amount } = req.body;  // The amount in centavos
-  const { email } = req.user;   // Email from the decoded token
 
-  try {
-    // Create the payment link using PayMongo's API
-    const response = await axios.post(
-      'https://api.paymongo.com/v1/links',
-      {
-        data: {
-          attributes: {
-            amount: amount,
-            description: `Payment from ${email}`,
-            checkout_url: null,
-            payment_method_types: ['card', 'gcash'],
-            currency: 'PHP',
-          },
-        },
-      },
-      {
-        headers: {
-          Authorization: `Basic ${encodedSecretKey}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-
-    const paymentLink = response.data.data;
-
-    // Check if the paymentLink contains the checkout URL
-    const checkoutUrl = paymentLink.attributes.checkout_url;
-
-    // If checkout URL exists, return it
-    if (checkoutUrl) {
-      res.json({
-        checkoutUrl: checkoutUrl,
-      });
-    } else {
-      throw new Error('Checkout URL not available');
-    }
-  } catch (error) {
-    console.error('Error creating payment link:', error.message || error);
-    res.status(500).json({ error: 'Failed to create payment link' });
-  }
-});
-
-
-///////link2
-app.post('/payment_link2', authenticateToken, async (req, res) => {
-  const { amount } = req.body;  // The amount in centavos
-  const { email } = req.user;   // Email from the decoded token
+// Payment link session endpoint
+app.post('/payment_link_Session', authenticateToken, async (req, res) => {
+  const { amount } = req.body; // The amount in centavos
+  const { email } = req.user; // Email from the decoded token
 
   if (!amount || amount <= 0) {
     return res.status(400).json({ error: 'Invalid amount' });
@@ -2595,26 +2548,31 @@ app.post('/payment_link2', authenticateToken, async (req, res) => {
         {
           data: {
             attributes: {
-              amount: amount * 100,
-              currency: 'PHP',
+              // amount: amount * 1000,
+              // currency: 'PHP',
               description: 'Payment for your transaction',
               billing: {
                 name,
                 email,
                 phone,
+
               },
+              billing_information_fields_editable: 'disabled', //cant edit
               line_items: [
                 {
-                  name: 'Food Waste',
+                  name: 'Poop Waste',
                   amount: 100 * 100,
                   currency: 'PHP',
                   description: 'Payment for service',
                   quantity: 1,
+
                 },
               ],
-              payment_method_types: ['gcash', 'card', 'paymaya', 'grab_pay'],
-              success_url: 'https://trashtrack.com/success',
-              cancel_url: 'https://trashtrack.com/cancel',
+              payment_method_types: ['gcash', 'card', 'paymaya', 'grab_pay', 'qrph'],
+              // success_url: 'https://trashtrack.com/payment-success',
+              // cancel_url: 'https://trashtrack.com/payment-cancel',
+              //success_url: 'http://192.168.254.187:3000',
+              metadata: { gb_id: 'your_bill_id_here' }, //for generated bill from table db
             },
           },
         },
@@ -2627,22 +2585,11 @@ app.post('/payment_link2', authenticateToken, async (req, res) => {
       );
 
       const checkoutUrl = response.data.data.attributes.checkout_url;
+      const sessionId = response.data.data.id;
 
-      // const checkoutSession = response.data.data;
-      // const sessionId = checkoutSession.id;  // Checkout session ID
-      // const transactionId = checkoutSession.attributes.transaction_id; // If available
-
-      const checkoutSession = response.data.data;
-      const sessionId = checkoutSession.id;  // Checkout session ID
-      // const paymentId = checkoutSession.payments.id; // Payment ID
-      // const paymentStatus = checkoutSession.payments.attributes.status; // Payment status
-
-      console.log(sessionId);
-      // console.log(paymentId);
-      // console.log(paymentStatus);
       console.log(checkoutUrl);
       if (checkoutUrl) {
-        res.json({ checkoutUrl });
+        res.json({ checkoutUrl, sessionId });
       } else {
         throw new Error('Checkout URL not available');
       }
@@ -2654,7 +2601,247 @@ app.post('/payment_link2', authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message || 'Failed to create checkout session' });
   }
 });
+//////////////
 
+// Payment status check endpoint
+app.get('/payment_status/:sessionId', authenticateToken, async (req, res) => {
+  const { sessionId } = req.params;
+
+  try {
+    const response = await axios.get(`https://api.paymongo.com/v1/checkout_sessions/${sessionId}`, {
+      headers: {
+        Authorization: `Basic ${encodedSecretKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const payments = response.data.data.attributes.payments;
+
+    if (payments && payments.length > 0) {
+      const isPaid = payments.some(payment => payment.attributes.status === 'paid');
+
+      if (isPaid) {
+
+        console.log("At least one payment is 'paid'");
+        return res.json();
+      } else {
+        console.log("Failed");
+      }
+
+    } else {
+      console.log('No payments found');
+    }
+
+  } catch (error) {
+    console.error('Error checking payment status:', error.message);
+    res.status(500).json({ error: 'Failed to check payment status' });
+  }
+});
+
+// paymongo will this endpoint (for status check)
+app.post('/webhooks/paymongo', async (req, res) => {
+  const event = req.body; // Event payload from PayMongo
+  console.log('Received event:', JSON.stringify(event, null, 2)); // Log the entire event payload
+
+  // Access the event type correctly
+  const eventType = event.data.attributes.type;
+
+  if (!eventType) {
+    console.log('Event type is undefined');
+    return res.sendStatus(400); // Respond with an error for unhandled types
+  }
+
+  switch (eventType) {
+    case 'checkout_session.payment.paid':
+      const payments = event.data.attributes.data.attributes.payments;
+      const checkoutId = event.data.attributes.data.id;
+      const billId = event.data.attributes.data.attributes.metadata.gb_id;
+
+      if (payments && payments.length > 0) {
+        const paymentId = payments[0].id; // Payment ID
+        const amount = payments[0].attributes.amount / 100; // Amount in cents
+        const method = payments[0].attributes.source.type;
+        const pay_status = payments[0].attributes.status;
+        console.log(amount);
+        console.log(method);
+        console.log(pay_status);
+        console.log(paymentId);
+        console.log(checkoutId);
+        console.log(billId);
+        console.log('Payment was successful');
+       // console.log('Payment was successful:', event.data);
+        // Insert logic to save the session and amount to your database
+
+        try {
+          await pool.query(`
+            INSERT INTO payment (p_amount, p_status, p_method, p_trans_id, p_checkout_id)
+            VALUES ($1, $2, $3, $4, $5)`,
+            [amount, pay_status, method, paymentId, checkoutId]
+          );
+          console.log('Payment details inserted successfully.');
+          // update the generated bill table next
+        } catch (err) {
+          console.error('Error inserting payment details:', err);
+        }
+      } else {
+        console.error('Payments array is empty or undefined:', payments);
+      }
+      break;
+
+
+    case 'checkout_session.payment.failed':
+      // Handle failed payment
+      console.log('Payment failed:', event.data);
+      // Insert logic for handling failed payment
+      break;
+
+    default:
+      console.log('Unhandled event type:', eventType);
+      return res.sendStatus(400); // Respond with an error for unhandled types
+  }
+
+  res.sendStatus(200); // Respond to acknowledge receipt
+});
+
+
+// // Route to create a PayMongo payment link
+// app.post('/payment_link', authenticateToken, async (req, res) => {
+//   const { amount } = req.body;  // The amount in centavos
+//   const { email } = req.user;   // Email from the decoded token
+
+//   try {
+//     // Create the payment link using PayMongo's API
+//     const response = await axios.post(
+//       'https://api.paymongo.com/v1/links',
+
+//       {
+//         data: {
+//           attributes: {
+//             amount: amount,
+//             description: `Payment from ${email}`,
+//             checkout_url: null,
+//             payment_method_types: ['card', 'gcash'],
+//             currency: 'PHP',
+//           },
+//         },
+//       },
+//       {
+//         headers: {
+//           Authorization: `Basic ${encodedSecretKey}`,
+//           'Content-Type': 'application/json',
+//         },
+//       }
+//     );
+
+//     const paymentLink = response.data.data;
+
+//     // Check if the paymentLink contains the checkout URL
+//     const checkoutUrl = paymentLink.attributes.checkout_url;
+//     console.log(paymentLink);
+//     // If checkout URL exists, return it
+//     if (checkoutUrl) {
+//       res.json({
+//         checkoutUrl: checkoutUrl,
+//       });
+//     } else {
+//       throw new Error('Checkout URL not available');
+//     }
+//   } catch (error) {
+//     console.error('Error creating payment link:', error.message || error);
+//     res.status(500).json({ error: 'Failed to create payment link' });
+//   }
+// });
+
+
+// /////// final checkout link
+// app.post('/payment_link_Session', authenticateToken, async (req, res) => {
+//   const { amount } = req.body;  // The amount in centavos
+//   const { email } = req.user;   // Email from the decoded token
+
+//   if (!amount || amount <= 0) {
+//     return res.status(400).json({ error: 'Invalid amount' });
+//   }
+
+//   try {
+//     const result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
+
+//     if (result.rows.length > 0) {
+//       const user = result.rows[0];
+//       const name = `${user.cus_fname} ${user.cus_mname || ''} ${user.cus_lname}`.trim();
+//       const phone = user.cus_contact;
+
+//       const response = await axios.post(
+//         'https://api.paymongo.com/v1/checkout_sessions',
+//         {
+//           data: {
+//             attributes: {
+//               amount: amount * 100,
+//               currency: 'PHP',
+//               description: 'Payment for your transaction',
+//               billing: {
+//                 name,
+//                 email,
+//                 phone,
+//               },
+//               line_items: [
+//                 {
+//                   name: 'Food Waste',
+//                   amount: 100 * 100,
+//                   currency: 'PHP',
+//                   description: 'Payment for service',
+//                   quantity: 1,
+//                 },
+//               ],
+//               //payment_method_types: ['gcash', 'card', 'paymaya', 'grab_pay'],
+//               payment_method_types: [
+//                 'gcash',
+//                 'card',
+//                 'paymaya',
+//                 'grab_pay',
+//                 'qrph',
+//                 //'billease',
+//               ],
+//               success_url: 'https://trashtrack.com/success',
+//               cancel_url: 'https://trashtrack.com/cancel',
+//             },
+//           },
+//         },
+//         {
+//           headers: {
+//             Authorization: `Basic ${encodedSecretKey}`,
+//             'Content-Type': 'application/json',
+//           },
+//         }
+//       );
+
+//       const checkoutUrl = response.data.data.attributes.checkout_url;
+
+//       // const checkoutSession = response.data.data;
+//       // const sessionId = checkoutSession.id;  // Checkout session ID
+//       // const transactionId = checkoutSession.attributes.transaction_id; // If available
+
+//       const checkoutSession = response.data.data;
+//       const sessionId = checkoutSession.id;  // Checkout session ID
+//       // const paymentId = checkoutSession.payments.id; // Payment ID
+//       // const paymentStatus = checkoutSession.payments.attributes.status; // Payment status
+
+//       console.log(sessionId);
+//       // console.log(paymentId);
+//       // console.log(paymentStatus);
+//       console.log(checkoutUrl);
+//       if (checkoutUrl) {
+//         res.json({ checkoutUrl });
+//       } else {
+//         throw new Error('Checkout URL not available');
+//       }
+//     } else {
+//       res.status(404).json({ error: 'User not found' });
+//     }
+//   } catch (error) {
+//     console.error('Error creating checkout session:', error.message || error);
+//     res.status(500).json({ error: error.message || 'Failed to create checkout session' });
+//   }
+// });
 
 // // Route to create a PayMongo checkout session
 // app.post('/payment_link2', authenticateToken, async (req, res) => {
@@ -2730,29 +2917,29 @@ app.post('/payment_link2', authenticateToken, async (req, res) => {
 
 
 ///status
-app.get('/payment_status/:paymentId', authenticateToken, async (req, res) => {
-  const { paymentId } = req.params;
+// app.get('/payment_link_status/:paymentId', authenticateToken, async (req, res) => {
+//   const { paymentId } = req.params;
 
+//   console.log(2222222222222222222222222);
+//   try {
+//     const response = await axios.get(
+//       `https://api.paymongo.com/v1/payments/${paymentId}`,
+//       {
+//         headers: {
+//           Authorization: `Basic ${encodedSecretKey}`,
+//         },
+//       }
+//     );
 
-  try {
-    const response = await axios.get(
-      `https://api.paymongo.com/v1/payments/${paymentId}`,
-      {
-        headers: {
-          Authorization: `Basic ${encodedSecretKey}`,
-        },
-      }
-    );
+//     const paymentStatus = response.data.data.attributes.status;
+//     console.log(paymentStatus);
+//     res.json({ status: paymentStatus });
 
-    const paymentStatus = response.data.data.attributes.status;
-    console.log(paymentStatus);
-    res.json({ status: paymentStatus });
-
-  } catch (error) {
-    console.error('Error fetching payment status:', error.message || error);
-    res.status(500).json({ error: 'Failed to fetch payment status' });
-  }
-});
+//   } catch (error) {
+//     console.error('Error fetching payment status:', error.message || error);
+//     res.status(500).json({ error: 'Failed to fetch payment status' });
+//   }
+// });
 
 
 
