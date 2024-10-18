@@ -28,6 +28,8 @@ function hashPassword(password) {
 const nodemailer = require('nodemailer');
 const { smtp } = require('./config');
 
+//pdf
+const PDFDocument = require('pdfkit');
 
 //
 const app = express();
@@ -2174,7 +2176,78 @@ app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
   }
 });
 
+// Fetch all bill
+app.post('/fetch_bill', authenticateToken, async (req, res) => {
+  const cusId = req.user.id; // Assuming user ID is available after authentication
 
+  try {
+    // Fetch bills associated with the specified bk_id for the authenticated customer
+    const result = await pool.query(
+      `SELECT gb.* FROM GENERATE_BILL gb
+       JOIN BOOKING b ON gb.BK_ID = b.BK_ID
+       WHERE b.CUS_ID = $1`,
+      [cusId]
+    );
+
+    // Check if any bill data was found
+    if (result.rows.length > 0) {
+      res.json(result.rows); // Return the bills as a response
+    } else {
+      console.error('No bills found for the specified booking ID');
+      res.status(404).json({ error: 'No bills found for the specified booking ID' });
+    }
+  } catch (error) {
+    console.error('Error fetching bill data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Fetch single bill
+app.post('/fetch_bill_details', authenticateToken, async (req, res) => {
+  const { billId } = req.body;
+
+  try {
+    // Fetch bills associated with the specified bk_id for the authenticated customer
+    const result = await pool.query(
+      `SELECT * FROM GENERATE_BILL WHERE GB_ID = $1`,
+      [billId]
+    );
+
+    // Check if any bill data was found
+    if (result.rows.length > 0) {
+      res.json(result.rows[0]); // Return the bills as a response
+    } else {
+      console.error('No bills found ');
+      res.status(404).json({ error: 'No bills found ' });
+    }
+  } catch (error) {
+    console.error('Error fetching bill data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//get payment
+app.post('/fetch_payment', authenticateToken, async (req, res) => {
+  const cusId = req.user.id;
+
+  let userType = 'customer'; //for identity
+  try {
+    const result = await pool.query('SELECT * FROM PAYMENT WHERE cus_email = $1', [email]);
+
+    // Check if any user data was found
+    if (result.rows.length > 0) {
+      const user = result.rows[0];
+
+      res.json(responseData);
+    } else {
+      console.error('User not found');
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching user data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 // app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
 //   const userId = req.user.id;
 
@@ -2528,9 +2601,10 @@ const encodedSecretKey = Buffer.from(PAYMONGO_SECRET_KEY).toString('base64');
 
 // Payment link session endpoint
 app.post('/payment_link_Session', authenticateToken, async (req, res) => {
-  const { amount } = req.body; // The amount in centavos
-  const { email } = req.user; // Email from the decoded token
+  const { email } = req.user;
+  const { gb_id, amount } = req.body; // The amount in centavos
 
+  console.log(gb_id);
   if (!amount || amount <= 0) {
     return res.status(400).json({ error: 'Invalid amount' });
   }
@@ -2549,8 +2623,9 @@ app.post('/payment_link_Session', authenticateToken, async (req, res) => {
           data: {
             attributes: {
               // amount: amount * 1000,
-              // currency: 'PHP',
-              description: 'Payment for your transaction',
+              // currency: 'PHP', 
+              description: 'Billing Id: ' + gb_id,
+              //description: 'Payment for your transaction',
               billing: {
                 name,
                 email,
@@ -2560,19 +2635,27 @@ app.post('/payment_link_Session', authenticateToken, async (req, res) => {
               billing_information_fields_editable: 'disabled', //cant edit
               line_items: [
                 {
-                  name: 'Poop Waste',
-                  amount: 100 * 100,
+                  name: 'Waste Pickup Service',
+                  amount: amount,
                   currency: 'PHP',
-                  description: 'Payment for service',
+                  //description: 'Billing Id: ' + gb_id,
                   quantity: 1,
-
                 },
+                // {
+                //   name: 'Poop Waste',
+                //   amount: 100 * 100,
+                //   currency: 'PHP',
+                //   description: 'Payment for service',
+                //   quantity: 1,
+                // },
+
+
               ],
               payment_method_types: ['gcash', 'card', 'paymaya', 'grab_pay', 'qrph'],
               // success_url: 'https://trashtrack.com/payment-success',
               // cancel_url: 'https://trashtrack.com/payment-cancel',
               //success_url: 'http://192.168.254.187:3000',
-              metadata: { gb_id: 'your_bill_id_here' }, //for generated bill from table db
+              metadata: { gb_id: gb_id }, //for generated bill from table db
             },
           },
         },
@@ -2669,17 +2752,24 @@ app.post('/webhooks/paymongo', async (req, res) => {
         console.log(checkoutId);
         console.log(billId);
         console.log('Payment was successful');
-       // console.log('Payment was successful:', event.data);
+        // console.log('Payment was successful:', event.data);
         // Insert logic to save the session and amount to your database
 
         try {
           await pool.query(`
-            INSERT INTO payment (p_amount, p_status, p_method, p_trans_id, p_checkout_id)
-            VALUES ($1, $2, $3, $4, $5)`,
-            [amount, pay_status, method, paymentId, checkoutId]
+            INSERT INTO payment (p_amount, p_status, p_method, p_trans_id, p_checkout_id, gb_id)
+            VALUES ($1, $2, $3, $4, $5, $6)`,
+            [amount, pay_status, method, paymentId, checkoutId, billId]
           );
-          console.log('Payment details inserted successfully.');
-          // update the generated bill table next
+
+          const updateResult = await pool.query(`
+            UPDATE GENERATE_BILL SET gb_status = $1 WHERE gb_id = $2`,
+            ['Paid', billId]
+          );
+          if (updateResult.rowCount > 0) {
+            console.log('Payment details inserted successfully.');
+          }
+
         } catch (err) {
           console.error('Error inserting payment details:', err);
         }
@@ -2703,6 +2793,88 @@ app.post('/webhooks/paymongo', async (req, res) => {
   res.sendStatus(200); // Respond to acknowledge receipt
 });
 
+
+// // generate PDF
+// app.get('/generate-pdf', (req, res) => {
+//   const doc = new PDFDocument();
+//   res.setHeader('Content-Disposition', 'attachment; filename=generated_pdf.pdf');
+
+//   // Pipe the document to the response
+//   doc.pipe(res);
+//   doc.text('This is a sample PDF generated on the server.', 100, 100);
+//   doc.end();
+// });
+
+app.get('/generate-pdf', (req, res) => {
+  const doc = new PDFDocument();
+
+  // Set the filename for download
+  res.setHeader('Content-Disposition', 'attachment; filename=generated_pdf.pdf');
+
+  // Pipe the document to the response
+  doc.pipe(res);
+
+  // Image and Title (Header)
+  const imagePath = path.join(__dirname, 'public/images/trashtrackicon.png'); // Ensure the image exists here
+  const yHeaderPosition = 50; // Adjust this based on where you want the image and text to appear
+
+  if (fs.existsSync(imagePath)) {
+    // Draw the image on the left
+    doc.image(imagePath, {
+      fit: [50, 50], // Adjust the size of the image
+      align: 'left',
+      valign: 'center',
+      x: 100, // X position for the image (left alignment)
+      y: yHeaderPosition // Y position for both image and text
+    });
+
+    // Add title text beside the image
+    doc.fontSize(20).text('TrashTrack', 160, yHeaderPosition + 15); // Adjust X (160) and Y (+15) to align text beside the image
+  } else {
+    doc.text('Image not found', 100, yHeaderPosition);
+  }
+
+  // Billing receipt message
+  doc.moveDown();
+  doc.fontSize(16).text('This is your billing receipt', { align: 'left' });
+
+  // Example Table Data
+  const tableData = [
+    { column1: 'Item 1', column2: 'Description 1', column3: '$10' },
+    { column1: 'Item 2', column2: 'Description 2', column3: '$15' },
+    { column1: 'Item 3', column2: 'Description 3', column3: '$20' }
+  ];
+
+  // Define the start position for the table
+  const tableStartY = yHeaderPosition + 100;
+  let yPosition = tableStartY;
+
+  // Draw table headers
+  doc.fontSize(12).text('Item', 100, yPosition);
+  doc.text('Description', 200, yPosition);
+  doc.text('Price', 400, yPosition);
+
+  // Draw a line under the headers
+  doc.moveTo(100, yPosition + 15)
+    .lineTo(500, yPosition + 15)
+    .stroke();
+
+  // Iterate over the table data
+  tableData.forEach(row => {
+    yPosition += 20;
+    doc.text(row.column1, 100, yPosition);
+    doc.text(row.column2, 200, yPosition);
+    doc.text(row.column3, 400, yPosition);
+  });
+
+  // Draw a line under the table
+  doc.moveTo(100, yPosition + 15)
+    .lineTo(500, yPosition + 15)
+    .stroke();
+
+  // End the document
+  doc.end();
+});
 
 // // Route to create a PayMongo payment link
 // app.post('/payment_link', authenticateToken, async (req, res) => {
