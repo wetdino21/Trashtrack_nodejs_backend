@@ -2248,6 +2248,35 @@ app.post('/fetch_payment', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+// Fetch all vehicles with vehicle type
+app.post('/fetch_all_vehicles', authenticateToken, async (req, res) => {
+  try {
+    // Fetch all vehicles along with their vehicle type
+    const result = await pool.query(
+      `
+      SELECT v.v_id, v.v_plate, v.v_status, v.v_capacity, v.v_capacity_unit, 
+             v.v_created_at, v.v_updated_at, v.emp_id, v.driver_id, 
+             v.driver_date_assigned_at, v.driver_date_updated_at, 
+             vt.vtype_name
+      FROM vehicle v
+      JOIN vehicle_type vt ON v.v_typeid = vt.vtype_id
+      `
+    );
+
+    // Check if any vehicle data was found
+    if (result.rows.length > 0) {
+      res.json(result.rows); // Return the vehicles and their types as a response
+    } else {
+      console.error('No vehicles found');
+      res.status(404).json({ error: 'No vehicles found' });
+    }
+  } catch (error) {
+    console.error('Error fetching vehicle data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
 //   const userId = req.user.id;
 
@@ -2724,7 +2753,7 @@ app.get('/payment_status/:sessionId', authenticateToken, async (req, res) => {
 // paymongo will this endpoint (for status check)
 app.post('/webhooks/paymongo', async (req, res) => {
   const event = req.body; // Event payload from PayMongo
-  console.log('Received event:', JSON.stringify(event, null, 2)); // Log the entire event payload
+  //console.log('Received event:', JSON.stringify(event, null, 2)); // Log the entire event payload
 
   // Access the event type correctly
   const eventType = event.data.attributes.type;
