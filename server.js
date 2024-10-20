@@ -2633,7 +2633,7 @@ app.post('/payment_link_Session', authenticateToken, async (req, res) => {
   const { email } = req.user;
   const { gb_id, amount } = req.body; // The amount in centavos
 
-  console.log(gb_id);
+  //console.log(gb_id);
   if (!amount || amount <= 0) {
     return res.status(400).json({ error: 'Invalid amount' });
   }
@@ -2715,40 +2715,40 @@ app.post('/payment_link_Session', authenticateToken, async (req, res) => {
 });
 //////////////
 
-// Payment status check endpoint
-app.get('/payment_status/:sessionId', authenticateToken, async (req, res) => {
-  const { sessionId } = req.params;
+// // Payment status check endpoint
+// app.get('/payment_status/:sessionId', authenticateToken, async (req, res) => {
+//   const { sessionId } = req.params;
 
-  try {
-    const response = await axios.get(`https://api.paymongo.com/v1/checkout_sessions/${sessionId}`, {
-      headers: {
-        Authorization: `Basic ${encodedSecretKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
+//   try {
+//     const response = await axios.get(`https://api.paymongo.com/v1/checkout_sessions/${sessionId}`, {
+//       headers: {
+//         Authorization: `Basic ${encodedSecretKey}`,
+//         'Content-Type': 'application/json',
+//       },
+//     });
 
-    const payments = response.data.data.attributes.payments;
+//     const payments = response.data.data.attributes.payments;
 
-    if (payments && payments.length > 0) {
-      const isPaid = payments.some(payment => payment.attributes.status === 'paid');
+//     if (payments && payments.length > 0) {
+//       const isPaid = payments.some(payment => payment.attributes.status === 'paid');
 
-      if (isPaid) {
+//       if (isPaid) {
 
-        console.log("At least one payment is 'paid'");
-        return res.json();
-      } else {
-        console.log("Failed");
-      }
+//         console.log("At least one payment is 'paid'");
+//         return res.json();
+//       } else {
+//         console.log("Failed");
+//       }
 
-    } else {
-      console.log('No payments found');
-    }
+//     } else {
+//       console.log('No payments found');
+//     }
 
-  } catch (error) {
-    console.error('Error checking payment status:', error.message);
-    res.status(500).json({ error: 'Failed to check payment status' });
-  }
-});
+//   } catch (error) {
+//     console.error('Error checking payment status:', error.message);
+//     res.status(500).json({ error: 'Failed to check payment status' });
+//   }
+// });
 
 // paymongo will this endpoint (for status check)
 app.post('/webhooks/paymongo', async (req, res) => {
@@ -2823,87 +2823,316 @@ app.post('/webhooks/paymongo', async (req, res) => {
 });
 
 
-// // generate PDF
-// app.get('/generate-pdf', (req, res) => {
-//   const doc = new PDFDocument();
-//   res.setHeader('Content-Disposition', 'attachment; filename=generated_pdf.pdf');
 
-//   // Pipe the document to the response
-//   doc.pipe(res);
-//   doc.text('This is a sample PDF generated on the server.', 100, 100);
-//   doc.end();
-// });
 
-app.get('/generate-pdf', (req, res) => {
+
+
+
+
+// Utility function to format numbers with commas
+function formatNumComma(number) {
+  return Number(number).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Generate bill PDF
+app.post('/generate-pdf', authenticateToken, async (req, res) => {
+  const { billId } = req.body;
+  console.log(billId);
   const doc = new PDFDocument();
 
-  // Set the filename for download
+  // Set the filename for download and content type
   res.setHeader('Content-Disposition', 'attachment; filename=generated_pdf.pdf');
+  res.setHeader('Content-Type', 'application/pdf');
 
   // Pipe the document to the response
   doc.pipe(res);
 
   // Image and Title (Header)
-  const imagePath = path.join(__dirname, 'public/images/trashtrackicon.png'); // Ensure the image exists here
-  const yHeaderPosition = 50; // Adjust this based on where you want the image and text to appear
+  const imagePath = path.join(__dirname, 'public/images/trashtrackicon.png');
+  const roboto = path.join(__dirname, 'fonts/Roboto-Light.ttf');
+  const robotoBold = path.join(__dirname, 'fonts/Roboto-Regular.ttf');
+  let yHeaderPosition = 50;
 
   if (fs.existsSync(imagePath)) {
-    // Draw the image on the left
     doc.image(imagePath, {
-      fit: [50, 50], // Adjust the size of the image
+      fit: [50, 50],
       align: 'left',
       valign: 'center',
-      x: 100, // X position for the image (left alignment)
-      y: yHeaderPosition // Y position for both image and text
+      x: yHeaderPosition - 10,
+      y: yHeaderPosition - 10
     });
 
-    // Add title text beside the image
-    doc.fontSize(20).text('TrashTrack', 160, yHeaderPosition + 15); // Adjust X (160) and Y (+15) to align text beside the image
+    doc.fontSize(20).text('TrashTrack', yHeaderPosition + 30, yHeaderPosition + 10);
   } else {
     doc.text('Image not found', 100, yHeaderPosition);
   }
 
-  // Billing receipt message
-  doc.moveDown();
-  doc.fontSize(16).text('This is your billing receipt', { align: 'left' });
+  // Complete Address of the Binaliw Cebu Dumpsite (aligned to the right)
+  doc.font('Helvetica').fontSize(9);
+  let addressYPosition = yHeaderPosition;
+  doc.text('Binaliw Cebu Dumpsite', 400, addressYPosition, { align: 'right' });
+  doc.text('Cebu City, Cebu', 400, addressYPosition + 15, { align: 'right' });
+  doc.text('Philippines', 400, addressYPosition + 30, { align: 'right' });
 
-  // Example Table Data
-  const tableData = [
-    { column1: 'Item 1', column2: 'Description 1', column3: '$10' },
-    { column1: 'Item 2', column2: 'Description 2', column3: '$15' },
-    { column1: 'Item 3', column2: 'Description 3', column3: '$20' }
-  ];
+  // Billing Statement Title (Centered)
+  doc.font('Helvetica-Bold').fontSize(16).text('Billing Statement', 50, addressYPosition + 50, { align: 'center' });
 
-  // Define the start position for the table
-  const tableStartY = yHeaderPosition + 100;
-  let yPosition = tableStartY;
+  // // Invoice Details (aligned to the right)
+  // doc.font('Helvetica').fontSize(9);
+  let invoiceDetailsYPosition = addressYPosition + 80;
+  // const rightXPosition = 400;
+  // const invoiceDetails = [
+  //   { label: 'Invoice #:', value: '[Your Invoice Number]' },
+  //   { label: 'Date:', value: new Date().toLocaleDateString() },
+  //   { label: 'Total Due:', value: '[Total Amount]' },
+  //   { label: 'Due Date:', value: '[Due Date]' },
+  // ];
+  // invoiceDetails.forEach((detail, index) => {
+  //   const yPosition = invoiceDetailsYPosition + index * 15;
+  //   doc.text(detail.label, rightXPosition, yPosition);
+  //   doc.text(detail.value, rightXPosition, yPosition, { align: 'right' });
+  // });
 
-  // Draw table headers
-  doc.fontSize(12).text('Item', 100, yPosition);
-  doc.text('Description', 200, yPosition);
-  doc.text('Price', 400, yPosition);
+  // Display bk_id and billId at the left
+  try {
+    const result = await pool.query(`
+      SELECT
+        b.bk_id,
+        bw.bw_name,
+        bw.bw_unit,
+        bw.bw_total_unit,
+        bw.bw_price,
+        bw.bw_total_price,
+        gb.gb_date_issued,
+        gb.gb_date_due,
+        gb.gb_accrual_period,
+        gb.gb_interest,
+        gb.gb_tax
+      FROM
+        public.generate_bill gb
+      JOIN
+        public.booking b ON gb.bk_id = b.bk_id
+      JOIN
+        public.booking_waste bw ON b.bk_id = bw.bk_id
+      WHERE
+        gb.gb_id = $1
+    `, [billId]);
 
-  // Draw a line under the headers
-  doc.moveTo(100, yPosition + 15)
-    .lineTo(500, yPosition + 15)
-    .stroke();
+    const tableData = result.rows;
 
-  // Iterate over the table data
-  tableData.forEach(row => {
-    yPosition += 20;
-    doc.text(row.column1, 100, yPosition);
-    doc.text(row.column2, 200, yPosition);
-    doc.text(row.column3, 400, yPosition);
-  });
+    // Check if data is found
+    if (tableData.length === 0) {
+      doc.fontSize(14).text('No data found for the given bill ID.', { align: 'left' });
+      doc.end();
+      return;
+    }
 
-  // Draw a line under the table
-  doc.moveTo(100, yPosition + 15)
-    .lineTo(500, yPosition + 15)
-    .stroke();
+    // Display bk_id and billId
+    const bkId = tableData[0].bk_id;
+    doc.fontSize(9).text(`Bill ID: ${billId}`, 50, invoiceDetailsYPosition + 10);
+    doc.fontSize(9).text(`Booking ID: ${bkId}`, 50, invoiceDetailsYPosition + 20);
 
-  // End the document
+    // Add Terms section (Left aligned)
+    let termsYPosition = invoiceDetailsYPosition + 50;
+    doc.font('Helvetica-Bold').fontSize(12).text('TERMS:', 50, termsYPosition, { align: 'left' });
+    doc.font('Helvetica').fontSize(8);
+
+    const accrualPeriod = tableData[0].gb_accrual_period;
+    const interest = tableData[0].gb_interest;
+    const termsText = `The bill shall be due for payment and collection (${accrualPeriod}) days after issuance. Failure by the customer to make payment without valid and justifiable reason will result in a late payment charge of three percent (${interest}%) per month applied to any outstanding balance. Additionally, TrashTrack reserves the right to stop collecting waste materials from the customer's premises if payment is not made, preventing further processing and disposal services.`;
+
+    termsYPosition += 20;
+    doc.text(termsText, 50, termsYPosition, { align: 'left' });
+
+    // Move down for IDs and table
+    let tableYPosition = termsYPosition + 50;
+
+    // Column widths and positions
+    const col1X = 50;
+    const col2X = 200;
+    const col3X = 250;
+    const col4X = 320;
+    const col5X = 450;
+
+    // Table Headers
+    doc.fontSize(9);
+    doc.text('Waste Type', col1X, tableYPosition);
+    doc.text('Unit', col2X, tableYPosition);
+    doc.text('Total Unit', col3X, tableYPosition);
+    doc.text('Unit Price', col4X, tableYPosition);
+    doc.text('Total Price', col5X, tableYPosition);
+
+    doc.moveTo(50, tableYPosition + 15)
+      .lineTo(550, tableYPosition + 15)
+      .stroke();
+
+    let totalAmount = 0;
+
+    doc.font(roboto);
+
+    // Populate table with data
+    tableData.forEach(row => {
+      tableYPosition += 20;
+      doc.text(row.bw_name, col1X, tableYPosition);
+      doc.text(row.bw_unit, col2X, tableYPosition);
+      doc.text(Number(row.bw_total_unit).toLocaleString(), col3X, tableYPosition);
+      doc.text('₱ ' + formatNumComma(row.bw_price), col4X, tableYPosition); // Format price
+      doc.text('₱ ' + formatNumComma(row.bw_total_price), col5X, tableYPosition); // Format total price
+      totalAmount += Number(row.bw_total_price);
+    });
+
+    // Draw the bottom line for the table
+    doc.moveTo(50, tableYPosition + 15)
+      .lineTo(550, tableYPosition + 15)
+      .stroke();
+
+    // Move the yPosition down for the total amount display
+    tableYPosition += 30;
+
+    // Display the total amount aligned with the "Total Price" column
+    doc.font('Helvetica');
+    doc.fontSize(12).text('Sum Amount:', col4X, tableYPosition);
+    doc.font(roboto);
+    doc.text('₱ ' + formatNumComma(totalAmount), col5X, tableYPosition);
+    doc.font('Helvetica');
+
+    // Calculate the tax amount
+    const gbTax = tableData[0].gb_tax;
+    const taxRate = gbTax / 100;
+    const VAT = totalAmount * taxRate;
+    tableYPosition += 20;
+
+    // Display the tax amount
+    doc.font('Helvetica').fontSize(12).text('VAT (' + gbTax + '%):', col4X, tableYPosition);
+    doc.font(roboto);
+    doc.text('₱ ' + formatNumComma(VAT), col5X, tableYPosition);
+
+    // Final total amount after tax
+    const finalTotalAmount = totalAmount + VAT;
+    const gbDateIssued = tableData[0].gb_date_issued;
+    const gbDueDate = tableData[0].gb_date_due;
+
+    // Invoice Details (aligned to the right)
+    doc.font(robotoBold).fontSize(9);
+    //let invoiceDetailsYPosition = addressYPosition + 80;
+    const rightXPosition = 400;
+    const invoiceDetails = [
+      { label: 'Invoice #:', value: '######' },
+      { label: 'Date Issued:', value: gbDateIssued.toLocaleDateString() },
+      { label: 'Due Date:', value: gbDueDate.toLocaleDateString() },
+      { label: 'Total Due:', value: '₱ ' + formatNumComma(finalTotalAmount) },
+    ];
+
+    invoiceDetails.forEach((detail, index) => {
+      const yPosition = invoiceDetailsYPosition + index * 15;
+      // Display label normally
+      doc.text(detail.label, rightXPosition, yPosition);
+
+      // Check if this is the "Total Due" line to color only the value
+      if (detail.label === 'Total Due:') {
+        doc.fillColor('red') // Set color for the amount
+          .text(detail.value, rightXPosition, yPosition, { align: 'right' })
+          .fillColor('black'); // Reset color to black for other details
+      } else {
+        doc.text(detail.value, rightXPosition, yPosition, { align: 'right' }); // Normal text for other rows
+      }
+    });
+
+
+    tableYPosition += 20;
+
+    // Display the final total amount
+    doc.font('Helvetica-Bold').fontSize(12).text('Total Amount:', col4X, tableYPosition);
+    doc.font(roboto);
+    doc.text('₱ ' + formatNumComma(finalTotalAmount), col5X, tableYPosition);
+
+    tableYPosition += 50;
+    doc.font('Helvetica-Bold').fontSize(12).text('Cash-In place refer to top-right corner of this page', 50, tableYPosition, { align: 'left' });
+    tableYPosition += 20;
+    doc.text('Online Payment Paymongo', 50, tableYPosition);
+  } catch (error) {
+    console.error('Error fetching data:', error);
+    doc.fontSize(14).text('Error fetching data for the bill.', { align: 'left' });
+  }
+
   doc.end();
 });
+
+
+
+
+
+
+// app.get('/generate-pdf', (req, res) => {
+//   const doc = new PDFDocument();
+
+//   // Set the filename for download
+//   res.setHeader('Content-Disposition', 'attachment; filename=generated_pdf.pdf');
+
+//   // Pipe the document to the response
+//   doc.pipe(res);
+
+//   // Image and Title (Header)
+//   const imagePath = path.join(__dirname, 'public/images/trashtrackicon.png'); // Ensure the image exists here
+//   const yHeaderPosition = 50; // Adjust this based on where you want the image and text to appear
+
+//   if (fs.existsSync(imagePath)) {
+//     // Draw the image on the left
+//     doc.image(imagePath, {
+//       fit: [50, 50], // Adjust the size of the image
+//       align: 'left',
+//       valign: 'center',
+//       x: 100, // X position for the image (left alignment)
+//       y: yHeaderPosition // Y position for both image and text
+//     });
+
+//     // Add title text beside the image
+//     doc.fontSize(20).text('TrashTrack', 160, yHeaderPosition + 15); // Adjust X (160) and Y (+15) to align text beside the image
+//   } else {
+//     doc.text('Image not found', 100, yHeaderPosition);
+//   }
+
+//   // Billing receipt message
+//   doc.moveDown();
+//   doc.fontSize(16).text('This is your billing receipt', { align: 'left' });
+
+//   // Example Table Data
+//   const tableData = [
+//     { column1: 'Item 1', column2: 'Description 1', column3: '$10' },
+//     { column1: 'Item 2', column2: 'Description 2', column3: '$15' },
+//     { column1: 'Item 3', column2: 'Description 3', column3: '$20' }
+//   ];
+
+//   // Define the start position for the table
+//   const tableStartY = yHeaderPosition + 100;
+//   let yPosition = tableStartY;
+
+//   // Draw table headers
+//   doc.fontSize(12).text('Item', 100, yPosition);
+//   doc.text('Description', 200, yPosition);
+//   doc.text('Price', 400, yPosition);
+
+//   // Draw a line under the headers
+//   doc.moveTo(100, yPosition + 15)
+//     .lineTo(500, yPosition + 15)
+//     .stroke();
+
+//   // Iterate over the table data
+//   tableData.forEach(row => {
+//     yPosition += 20;
+//     doc.text(row.column1, 100, yPosition);
+//     doc.text(row.column2, 200, yPosition);
+//     doc.text(row.column3, 400, yPosition);
+//   });
+
+//   // Draw a line under the table
+//   doc.moveTo(100, yPosition + 15)
+//     .lineTo(500, yPosition + 15)
+//     .stroke();
+
+//   // End the document
+//   doc.end();
+// });
 
 // // Route to create a PayMongo payment link
 // app.post('/payment_link', authenticateToken, async (req, res) => {
