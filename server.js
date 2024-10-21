@@ -29,6 +29,8 @@ const nodemailer = require('nodemailer');
 const { smtp } = require('./config');
 
 //pdf
+const { Buffer } = require('buffer');
+const { PassThrough } = require('stream');
 const PDFDocument = require('pdfkit');
 
 //
@@ -2185,8 +2187,8 @@ app.post('/fetch_bill', authenticateToken, async (req, res) => {
     const result = await pool.query(
       `SELECT gb.* FROM GENERATE_BILL gb
        JOIN BOOKING b ON gb.BK_ID = b.BK_ID
-       WHERE b.CUS_ID = $1`,
-      [cusId]
+       WHERE b.CUS_ID = $1 AND gb.gb_status = $2`,
+      [cusId, 'Unpaid']
     );
 
     // Check if any bill data was found
@@ -2230,24 +2232,66 @@ app.post('/fetch_bill_details', authenticateToken, async (req, res) => {
 app.post('/fetch_payment', authenticateToken, async (req, res) => {
   const cusId = req.user.id;
 
-  let userType = 'customer'; //for identity
   try {
-    const result = await pool.query('SELECT * FROM PAYMENT WHERE cus_email = $1', [email]);
+    const result = await pool.query(`SELECT p.*,b.bk_id FROM PAYMENT p JOIN generate_bill gb ON gb.gb_id = p.gb_id JOIN booking b ON gb.bk_id = b.bk_id WHERE b.cus_id = $1`, [cusId]);
 
     // Check if any user data was found
     if (result.rows.length > 0) {
-      const user = result.rows[0];
-
-      res.json(responseData);
+      res.json(result.rows);
     } else {
-      console.error('User not found');
-      res.status(404).json({ error: 'User not found' });
+      res.status(404).json({ error: 'not found' });
     }
   } catch (error) {
     console.error('Error fetching user data:', error.message);
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+//fetch all pdf bills
+app.post('/fetch_pdf_bills', authenticateToken, async (req, res) => {
+  const { gb_id } = req.body;
+  try {
+    const result = await pool.query(`
+      SELECT bd_created_at,
+        bd_total_amnt, bd_file FROM bill_document WHERE gb_id = $1`, [gb_id]);
+
+    if (result.rows.length > 0) {
+      // Map over all rows to convert PDF data to base64
+      const billsData = result.rows.map(bill => ({
+        bd_created_at: bill.bd_created_at,
+        bd_total_amnt: bill.bd_total_amnt,
+        bd_file: bill.bd_file.toString('base64'),
+      }));
+
+      res.json(billsData);
+    } else {
+      res.status(404).json({ error: 'Bills not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching bill data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//
+app.post('/fetch_pdf', authenticateToken, async (req, res) => {
+  const { gb_id } = req.body;
+  try {
+    const result = await pool.query(`SELECT bd_file FROM bill_document WHERE gb_id = $1`, [gb_id]);
+    if (result.rows.length > 0) {
+      const pdfFiles = result.rows.map(row => row.bd_file); // Collect all PDF binary data
+      res.contentType("application/json");
+      res.json(pdfFiles);
+    } else {
+      res.status(404).json({ error: 'PDFs not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching PDFs:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
 
 // Fetch all vehicles with vehicle type
 app.post('/fetch_all_vehicles', authenticateToken, async (req, res) => {
@@ -2828,7 +2872,6 @@ app.post('/webhooks/paymongo', async (req, res) => {
 
 
 
-
 // Utility function to format numbers with commas
 function formatNumComma(number) {
   return Number(number).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -2877,21 +2920,8 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
   // Billing Statement Title (Centered)
   doc.font('Helvetica-Bold').fontSize(16).text('Billing Statement', 50, addressYPosition + 50, { align: 'center' });
 
-  // // Invoice Details (aligned to the right)
   // doc.font('Helvetica').fontSize(9);
-  let invoiceDetailsYPosition = addressYPosition + 80;
-  // const rightXPosition = 400;
-  // const invoiceDetails = [
-  //   { label: 'Invoice #:', value: '[Your Invoice Number]' },
-  //   { label: 'Date:', value: new Date().toLocaleDateString() },
-  //   { label: 'Total Due:', value: '[Total Amount]' },
-  //   { label: 'Due Date:', value: '[Due Date]' },
-  // ];
-  // invoiceDetails.forEach((detail, index) => {
-  //   const yPosition = invoiceDetailsYPosition + index * 15;
-  //   doc.text(detail.label, rightXPosition, yPosition);
-  //   doc.text(detail.value, rightXPosition, yPosition, { align: 'right' });
-  // });
+  let billDetailsYPosition = addressYPosition + 80;
 
   // Display bk_id and billId at the left
   try {
@@ -2905,9 +2935,11 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
         bw.bw_total_price,
         gb.gb_date_issued,
         gb.gb_date_due,
+        gb.gb_lead_days,
         gb.gb_accrual_period,
+        gb.gb_suspend_period,
         gb.gb_interest,
-        gb.gb_tax
+        gb.gb_tax 
       FROM
         public.generate_bill gb
       JOIN
@@ -2929,17 +2961,19 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     // Display bk_id and billId
     const bkId = tableData[0].bk_id;
-    doc.fontSize(9).text(`Bill ID: ${billId}`, 50, invoiceDetailsYPosition + 10);
-    doc.fontSize(9).text(`Booking ID: ${bkId}`, 50, invoiceDetailsYPosition + 20);
+    doc.fontSize(9).text(`Bill ID: ${billId}`, 50, billDetailsYPosition + 10);
+    doc.fontSize(9).text(`Booking ID: ${bkId}`, 50, billDetailsYPosition + 20);
 
     // Add Terms section (Left aligned)
-    let termsYPosition = invoiceDetailsYPosition + 50;
+    let termsYPosition = billDetailsYPosition + 50;
     doc.font('Helvetica-Bold').fontSize(12).text('TERMS:', 50, termsYPosition, { align: 'left' });
     doc.font('Helvetica').fontSize(8);
 
+    const leadDays = tableData[0].gb_lead_days;
     const accrualPeriod = tableData[0].gb_accrual_period;
+    const suspendPeriod = tableData[0].gb_suspend_period;
     const interest = tableData[0].gb_interest;
-    const termsText = `The bill shall be due for payment and collection (${accrualPeriod}) days after issuance. Failure by the customer to make payment without valid and justifiable reason will result in a late payment charge of three percent (${interest}%) per month applied to any outstanding balance. Additionally, TrashTrack reserves the right to stop collecting waste materials from the customer's premises if payment is not made, preventing further processing and disposal services.`;
+    const termsText = `The bill shall be due for payment and collection (${leadDays}) days after issuance. Failure by the customer to make payment without valid and justifiable reason will result in a late payment charge of (${interest}%) per ${accrualPeriod}days applied to any outstanding balance until ${suspendPeriod}days. Additionally, TrashTrack reserves the right to stop collecting waste materials from the customer's premises if payment is not made, preventing further processing and disposal services.`;
 
     termsYPosition += 20;
     doc.text(termsText, 50, termsYPosition, { align: 'left' });
@@ -2966,7 +3000,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
       .lineTo(550, tableYPosition + 15)
       .stroke();
 
-    let totalAmount = 0;
+    let sumAmount = 0;
 
     doc.font(roboto);
 
@@ -2978,7 +3012,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
       doc.text(Number(row.bw_total_unit).toLocaleString(), col3X, tableYPosition);
       doc.text('₱ ' + formatNumComma(row.bw_price), col4X, tableYPosition); // Format price
       doc.text('₱ ' + formatNumComma(row.bw_total_price), col5X, tableYPosition); // Format total price
-      totalAmount += Number(row.bw_total_price);
+      sumAmount += Number(row.bw_total_price);
     });
 
     // Draw the bottom line for the table
@@ -2991,40 +3025,40 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     // Display the total amount aligned with the "Total Price" column
     doc.font('Helvetica');
-    doc.fontSize(12).text('Sum Amount:', col4X, tableYPosition);
+    doc.fontSize(9).text('Sum Amount:', col4X, tableYPosition);
     doc.font(roboto);
-    doc.text('₱ ' + formatNumComma(totalAmount), col5X, tableYPosition);
+    doc.text('₱ ' + formatNumComma(sumAmount), col5X, tableYPosition);
     doc.font('Helvetica');
 
     // Calculate the tax amount
     const gbTax = tableData[0].gb_tax;
     const taxRate = gbTax / 100;
-    const VAT = totalAmount * taxRate;
+    const VAT = sumAmount * taxRate;
     tableYPosition += 20;
 
     // Display the tax amount
-    doc.font('Helvetica').fontSize(12).text('VAT (' + gbTax + '%):', col4X, tableYPosition);
+    doc.font('Helvetica').fontSize(9).text('VAT (' + gbTax + '%):', col4X, tableYPosition);
     doc.font(roboto);
     doc.text('₱ ' + formatNumComma(VAT), col5X, tableYPosition);
 
-    // Final total amount after tax
-    const finalTotalAmount = totalAmount + VAT;
+    // total amount after tax
+    const totalAmount = sumAmount + VAT;
+    res.setHeader('totalAmount', totalAmount.toFixed(2));
     const gbDateIssued = tableData[0].gb_date_issued;
     const gbDueDate = tableData[0].gb_date_due;
 
-    // Invoice Details (aligned to the right)
+    // bill Details (aligned to the right)
     doc.font(robotoBold).fontSize(9);
-    //let invoiceDetailsYPosition = addressYPosition + 80;
     const rightXPosition = 400;
-    const invoiceDetails = [
-      { label: 'Invoice #:', value: '######' },
+    const billDetails = [
+      { label: 'Bill #:', value: '######' },
       { label: 'Date Issued:', value: gbDateIssued.toLocaleDateString() },
       { label: 'Due Date:', value: gbDueDate.toLocaleDateString() },
-      { label: 'Total Due:', value: '₱ ' + formatNumComma(finalTotalAmount) },
+      { label: 'Total Due:', value: '₱ ' + formatNumComma(totalAmount) },
     ];
 
-    invoiceDetails.forEach((detail, index) => {
-      const yPosition = invoiceDetailsYPosition + index * 15;
+    billDetails.forEach((detail, index) => {
+      const yPosition = billDetailsYPosition + index * 15;
       // Display label normally
       doc.text(detail.label, rightXPosition, yPosition);
 
@@ -3042,14 +3076,19 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
     tableYPosition += 20;
 
     // Display the final total amount
-    doc.font('Helvetica-Bold').fontSize(12).text('Total Amount:', col4X, tableYPosition);
+    doc.font('Helvetica-Bold').fontSize(9).text('Total Amount:', col4X, tableYPosition);
     doc.font(roboto);
-    doc.text('₱ ' + formatNumComma(finalTotalAmount), col5X, tableYPosition);
+    doc.text('₱ ' + formatNumComma(totalAmount), col5X, tableYPosition);
 
     tableYPosition += 50;
     doc.font('Helvetica-Bold').fontSize(12).text('Cash-In place refer to top-right corner of this page', 50, tableYPosition, { align: 'left' });
     tableYPosition += 20;
     doc.text('Online Payment Paymongo', 50, tableYPosition);
+
+
+    //
+
+    doc.end();
   } catch (error) {
     console.error('Error fetching data:', error);
     doc.fontSize(14).text('Error fetching data for the bill.', { align: 'left' });
@@ -3060,6 +3099,47 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
 
 
+app.post('/upload_pdf', authenticateToken, async (req, res) => {
+  const { billId, pdfData } = req.body;
+
+  //
+  passTotalDue = 0;
+  try {
+    let insertPDF = false;
+    const checkExist = await pool.query(
+      `SELECT gb_id FROM bill_document WHERE gb_id = $1`, [billId]);
+
+    if (checkExist.rows.length === 0) {
+      insertPDF = true;
+    } else {
+      const checkAmnt = await pool.query(
+        `SELECT MAX(bd_total_amnt) AS total_amnt
+         FROM bill_document WHERE gb_id = $1`, [billId]);
+      if (checkAmnt.rows[0].total_amnt < passTotalDue.toFixed(2)) {
+        insertPDF = true;
+      }
+    }
+
+    if (insertPDF) {
+      // Ensure pdfData is a Buffer
+      const buffer = Buffer.from(pdfData, 'binary'); // Convert the pdfData to a buffer
+      const insertPDF = await pool.query(
+        `INSERT INTO bill_document (bd_total_amnt, gb_id, bd_file) VALUES($1, $2, $3)`,
+        [passTotalDue, billId, buffer]); // Insert buffer instead of base64 string
+
+      if (insertPDF.rowCount > 0) {
+        passTotalDue = 0;
+        console.log('Successfully inserted');
+        res.status(200).json({ message: 'PDF uploaded successfully' });
+      }
+    } else {
+      res.status(201).json({ message: 'PDF not inserted due to existing records' });
+    }
+  } catch (error) {
+    console.error('Error fetching PDFs:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 
 
 
