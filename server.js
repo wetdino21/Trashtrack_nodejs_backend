@@ -1603,7 +1603,7 @@ app.post('/arrival_notif', authenticateToken, async (req, res) => {
     const pickupDateOnly = new Date(booking.bk_date).toLocaleDateString(); // Extract only the date part
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); // Format current time to HH:MM
 
-    const message = `Waste Pickup Driver has arrived.\n\n` +
+    const message = `Waste Pickup Truck has arrived.\n\n` +
       `Dear ${booking.bk_fullname},\n\n` +
       `We are pleased to inform you that the truck has arrived at your pickup location!\n\n` +
       `Pickup Location: ${fullAddress}\n` +
@@ -2247,6 +2247,25 @@ app.post('/fetch_payment', authenticateToken, async (req, res) => {
   }
 });
 
+//get payment details
+app.post('/fetch_payment_details', authenticateToken, async (req, res) => {
+  const { billId } = req.body;
+
+  try {
+    const result = await pool.query(`SELECT * FROM PAYMENT WHERE gb_id = $1`, [billId]);
+
+    // Check if any user data was found
+    if (result.rows.length > 0) {
+      res.json(result.rows[0]);
+    } else {
+      res.status(404).json({ error: 'not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching user data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 //fetch all pdf bills
 app.post('/fetch_pdf_bills', authenticateToken, async (req, res) => {
   const { gb_id } = req.body;
@@ -2262,7 +2281,6 @@ app.post('/fetch_pdf_bills', authenticateToken, async (req, res) => {
         bd_total_amnt: bill.bd_total_amnt,
         bd_file: bill.bd_file.toString('base64'),
       }));
-
       res.json(billsData);
     } else {
       res.status(404).json({ error: 'Bills not found' });
@@ -2274,22 +2292,23 @@ app.post('/fetch_pdf_bills', authenticateToken, async (req, res) => {
 });
 
 //
-app.post('/fetch_pdf', authenticateToken, async (req, res) => {
-  const { gb_id } = req.body;
-  try {
-    const result = await pool.query(`SELECT bd_file FROM bill_document WHERE gb_id = $1`, [gb_id]);
-    if (result.rows.length > 0) {
-      const pdfFiles = result.rows.map(row => row.bd_file); // Collect all PDF binary data
-      res.contentType("application/json");
-      res.json(pdfFiles);
-    } else {
-      res.status(404).json({ error: 'PDFs not found' });
-    }
-  } catch (error) {
-    console.error('Error fetching PDFs:', error.message);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
+// app.post('/fetch_pdf', authenticateToken, async (req, res) => {
+//   const { gb_id } = req.body;
+//   try {
+//     const result = await pool.query(`SELECT bd_file FROM bill_document WHERE gb_id = $1`, [gb_id]);
+//     if (result.rows.length > 0) {
+//       console.log(22222222);
+//       const pdfFiles = result.rows.map(row => row.bd_file); // Collect all PDF binary data
+//       res.contentType("application/json");
+//       res.json(pdfFiles);
+//     } else {
+//       res.status(404).json({ error: 'PDFs not found' });
+//     }
+//   } catch (error) {
+//     console.error('Error fetching PDFs:', error.message);
+//     res.status(500).json({ error: 'Database error' });
+//   }
+// });
 
 
 
@@ -3043,7 +3062,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     // total amount after tax
     const totalAmount = sumAmount + VAT;
-    res.setHeader('totalAmount', totalAmount.toFixed(2));
+    //res.setHeader('totalAmount', totalAmount.toFixed(2));
     const gbDateIssued = tableData[0].gb_date_issued;
     const gbDueDate = tableData[0].gb_date_due;
 
@@ -3088,7 +3107,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     //
 
-    doc.end();
+    //doc.end();
   } catch (error) {
     console.error('Error fetching data:', error);
     doc.fontSize(14).text('Error fetching data for the bill.', { align: 'left' });
