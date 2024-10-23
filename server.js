@@ -2888,8 +2888,19 @@ app.post('/webhooks/paymongo', async (req, res) => {
 
 
 
+//// PDF ///////////////////////////////////////////////
 
+//add days to date for pdf
+function addDaysToDate(dateString, daysToAdd) {
+  // Parse the date string into a Date object
+  const date = new Date(dateString);
 
+  // Add the specified number of days
+  date.setDate(date.getDate() + daysToAdd);
+
+  // Return the new date in ISO format (or any other format you prefer)
+  return date.toISOString(); // returns date in ISO 8601 format
+}
 
 // Utility function to format numbers with commas
 function formatNumComma(number) {
@@ -2955,6 +2966,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
         gb.gb_date_issued,
         gb.gb_date_due,
         gb.gb_lead_days,
+        gb.gb_date_issued,
         gb.gb_accrual_period,
         gb.gb_suspend_period,
         gb.gb_interest,
@@ -2980,19 +2992,20 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     // Display bk_id and billId
     const bkId = tableData[0].bk_id;
-    doc.fontSize(9).text(`Bill ID: ${billId}`, 50, billDetailsYPosition + 10);
-    doc.fontSize(9).text(`Booking ID: ${bkId}`, 50, billDetailsYPosition + 20);
+    //doc.fontSize(9).text(`Bill ID: ${billId}`, 50, billDetailsYPosition + 10);
+    doc.fontSize(9).text(`Booking# ${bkId}`, 50, billDetailsYPosition + 20);
 
     // Add Terms section (Left aligned)
     let termsYPosition = billDetailsYPosition + 50;
     doc.font('Helvetica-Bold').fontSize(12).text('TERMS:', 50, termsYPosition, { align: 'left' });
     doc.font('Helvetica').fontSize(8);
 
+    const dateIssued = tableData[0].gb_date_issued;
     const leadDays = tableData[0].gb_lead_days;
     const accrualPeriod = tableData[0].gb_accrual_period;
     const suspendPeriod = tableData[0].gb_suspend_period;
     const interest = tableData[0].gb_interest;
-    const termsText = `The bill shall be due for payment and collection (${leadDays}) days after issuance. Failure by the customer to make payment without valid and justifiable reason will result in a late payment charge of (${interest}%) per ${accrualPeriod}days applied to any outstanding balance until ${suspendPeriod}days. Additionally, TrashTrack reserves the right to stop collecting waste materials from the customer's premises if payment is not made, preventing further processing and disposal services.`;
+    const termsText = `The bill shall be due for payment and collection (${leadDays}) days after issuance. Failure by the customer to make payment without valid and justifiable reason will result in a late payment charge of (${interest}% interest) per ${accrualPeriod}days applied to any outstanding balance until ${suspendPeriod}days. Additionally, TrashTrack reserves the right to stop collecting waste materials from the customer's premises if payment is not made, preventing further processing and disposal services.`;
 
     termsYPosition += 20;
     doc.text(termsText, 50, termsYPosition, { align: 'left' });
@@ -3066,14 +3079,229 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
     const gbDateIssued = tableData[0].gb_date_issued;
     const gbDueDate = tableData[0].gb_date_due;
 
+    // // bill Details (aligned to the right)
+    // doc.font(robotoBold).fontSize(9);
+    // const rightXPosition = 400;
+    // const billDetails = [
+    //   { label: 'Bill #:', value: '######' },
+    //   { label: 'Date Issued:', value: gbDateIssued.toLocaleDateString() },
+    //   { label: 'Due Date:', value: gbDueDate.toLocaleDateString() },
+    //   { label: 'Total Due:', value: '₱ ' + formatNumComma(totalAmount) },
+    // ];
+
+    // billDetails.forEach((detail, index) => {
+    //   const yPosition = billDetailsYPosition + index * 15;
+    //   // Display label normally
+    //   doc.text(detail.label, rightXPosition, yPosition);
+
+    //   // Check if this is the "Total Due" line to color only the value
+    //   if (detail.label === 'Total Due:') {
+    //     doc.fillColor('red') // Set color for the amount
+    //       .text(detail.value, rightXPosition, yPosition, { align: 'right' })
+    //       .fillColor('black'); // Reset color to black for other details
+    //   } else {
+    //     doc.text(detail.value, rightXPosition, yPosition, { align: 'right' }); // Normal text for other rows
+    //   }
+    // });
+
+
+    tableYPosition += 20;
+
+    // Display the final total amount
+    doc.font('Helvetica-Bold').fontSize(9).text('Total Amount:', col4X, tableYPosition);
+    doc.font(roboto);
+    doc.text('₱ ' + formatNumComma(totalAmount), col5X, tableYPosition);
+
+    tableYPosition += 20;
+    // doc.font('Helvetica-Bold').fontSize(12).text('Cash-In place refer to top-right corner of this page', 50, tableYPosition + 120, { align: 'left' });
+    // doc.text('Online Payment Paymongo', 50, tableYPosition + 140);
+
+
+    //added interest
+    console.log('\n11111111111111111111111111111111111111111111111');
+    let dueDate = addDaysToDate(dateIssued, leadDays);
+    let accrualDate = addDaysToDate(dueDate, accrualPeriod);
+    let suspendDate = addDaysToDate(dueDate, suspendPeriod);
+    console.log('issue date: ', dateIssued, leadDays);
+    console.log('due Date: ', dueDate);
+    console.log('accrual: ', accrualPeriod);
+    console.log('suspend: ', suspendPeriod);
+    console.log('interest: ', interest);
+    console.log('accrualDate: ', accrualDate);
+    console.log('suspendDate: ', suspendDate);
+
+
+    // //convert date
+    // let today = new Date();
+    // let Date_today = new Date(today.getFullYear(), today.getMonth(), today.getDate()); //
+    // let dueDate2 = new Date(dueDate);
+    // let Date_due = new Date(dueDate2.getFullYear(), dueDate2.getMonth(), dueDate2.getDate()); //
+    // let acrrualDate2 = new Date(accrualDate);
+    // let Date_accrual = new Date(acrrualDate2.getFullYear(), acrrualDate2.getMonth(), acrrualDate2.getDate()); //
+    // let suspendDate2 = new Date(suspendDate);
+    // let Date_suspend = new Date(suspendDate2.getFullYear(), suspendDate2.getMonth(), suspendDate2.getDate()); //
+
+    // console.log('\nDate_today: ', Date_today.toString());
+    // console.log('Date_due: ', Date_due.toString());
+    // console.log('Date_accrual: ', Date_accrual.toString());
+    // console.log('Date_suspend: ', Date_suspend.toString());
+    // //
+    // let amountDue = totalAmount;
+    // console.log('Total Amount: ', amountDue);
+    // //
+    // if (Date_today > Date_due) {
+    //   console.log('\n11111111111111111111111111111111111111111111111');
+    //   let interestAmnt = totalAmount * (interest / 100);
+    //   amountDue += interestAmnt;
+    //   console.log('interestAmnt: ', interestAmnt);
+    //   console.log('Amount Due 1: ', amountDue);
+    //   // oct 23 <= oct 4 and oct 23 <= oct 19
+    //   while (Date_today >= Date_accrual && Date_accrual <= Date_suspend) {
+    //     console.log('\n222222222222222222222222222222222222222222222222222222222222222');
+    //     interestAmnt = amountDue * (interest / 100);
+    //     amountDue += interestAmnt;
+    //     console.log('interestAmnt: ', interestAmnt);
+    //     console.log('Amount Due: ', amountDue);
+    //     console.log('\nDate_accrual111: ', Date_accrual.toString());
+    //     Date_accrual = new Date(addDaysToDate(Date_accrual, accrualPeriod)); //add accrual
+    //     console.log('Date_accrual222: ', Date_accrual.toString());
+    //   }
+    // }
+
+
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Convert dates to yyyy-mm-dd for comparison
+    let Date_today = new Date().setHours(0, 0, 0, 0); // Today's date at midnight
+    let Date_due = new Date(dueDate).setHours(0, 0, 0, 0);
+    let Date_accrual = new Date(accrualDate).setHours(0, 0, 0, 0);
+    let Date_suspend = new Date(suspendDate).setHours(0, 0, 0, 0);
+
+    // let amountDue = totalAmount;
+
+    // // If today's date is past the due date, calculate the additional interest
+    // if (Date_today > Date_due) {
+    //   console.log('Amount after tax: ', amountDue);
+    //   console.log('Today is after the due date, interest will be applied.');
+
+    //   // First interest application after due date
+    //   let interestAmount = totalAmount * (interest / 100);
+    //   amountDue += interestAmount;
+    //   console.log('Initial interest:', interestAmount);
+    //   console.log('New Amount Due:', amountDue);
+
+    //   // Continue applying interest in accrual periods until either today's date is past the suspension date or we reach the accrual date
+    //   while (Date_today >= Date_accrual && Date_accrual <= Date_suspend) {
+    //     console.log('\nApplying additional interest as we are still within the accrual period.');
+
+    //     // Apply interest for each accrual period
+    //     interestAmount = amountDue * (interest / 100);
+    //     amountDue += interestAmount;
+
+    //     console.log('Accrual Period Interest:', interestAmount);
+    //     console.log('Updated Amount Due:', amountDue);
+
+    //     // Move to the next accrual period
+    //     Date_accrual = new Date(addDaysToDate(Date_accrual, accrualPeriod)).setHours(0, 0, 0, 0);
+    //     console.log('Next Accrual Date:', new Date(Date_accrual).toDateString());
+    //   }
+    // }
+
+    // console.log('\nFinal Amount Due after interest:', amountDue.toFixed(2));
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+    // Added interest calculation section
+    let interestAppliedCount = 0;  // To count how many times interest is applied
+    let amountDue = totalAmount;   // Start with the total amount
+
+    tableYPosition += 20;
+    // Table headers
+    doc.font('Helvetica').fontSize(9)
+      .text('Date Interest Added', col2X, tableYPosition)
+      .text('Description', col4X, tableYPosition)
+      .text('Amount', col5X, tableYPosition);
+
+
+    // Draw the bottom line for the table
+    doc.moveTo(col2X, tableYPosition + 15)
+      .lineTo(550, tableYPosition + 15)
+      .stroke();
+
+    tableYPosition += 20;
+    // If today's date is past the due date, calculate the additional interest
+    if (Date_today > Date_due) {
+      console.log('Amount after tax: ', amountDue);
+      console.log('Today is after the due date, interest will be applied.');
+
+      // First interest application after due date
+      let interestAmount = totalAmount * (interest / 100);
+      amountDue += interestAmount;
+      interestAppliedCount += 1;
+
+      // Display the first interest row in the table
+      const firstdate = addDaysToDate(Date_due, 1);
+      doc.font(roboto).fontSize(9)
+        .text(new Date(firstdate).toDateString(), col2X, tableYPosition)  // Date of interest application
+        .text(`Overdue Interest (${interest}%):`, col4X, tableYPosition)         // Description
+        .text('₱ ' + formatNumComma(interestAmount), col5X, tableYPosition); // Interest amount
+      tableYPosition += 20;
+
+      console.log('Initial interest:', interestAmount);
+      console.log('New Amount Due:', amountDue);
+
+      // Continue applying interest in accrual periods until either today's date is past the suspension date or we reach the accrual date
+      while (Date_today >= Date_accrual && Date_accrual <= Date_suspend) {
+        console.log('\nApplying additional interest as we are still within the accrual period.');
+
+        // Apply interest for each accrual period
+        interestAmount = amountDue * (interest / 100);
+        amountDue += interestAmount;
+        interestAppliedCount += 1;
+
+        // Display additional interest in the table
+        doc.text(new Date(Date_accrual).toDateString(), col2X, tableYPosition)  // Date of interest application
+          .text(`Accrued Interest (${interest}%):`, col4X, tableYPosition)     // Description
+          .text('₱ ' + formatNumComma(interestAmount), col5X, tableYPosition); // Interest amount
+        tableYPosition += 20;
+
+        console.log('Accrual Period Interest:', interestAmount);
+        console.log('Updated Amount Due:', amountDue);
+
+        // Move to the next accrual period
+        Date_accrual = new Date(addDaysToDate(Date_accrual, accrualPeriod)).setHours(0, 0, 0, 0);
+        console.log('Next Accrual Date:', new Date(Date_accrual).toDateString());
+      }
+    }
+
+    // Draw the bottom line for the table
+    doc.moveTo(col2X, tableYPosition)
+      .lineTo(550, tableYPosition)
+      .stroke();
+
+      tableYPosition += 10;
+    // Display interest summary if interest was applied
+    if (interestAppliedCount > 0) {
+      doc.text(`Interest Applied: ${interestAppliedCount} time/s`, col4X, tableYPosition);
+      tableYPosition += 20;
+    }
+
+    console.log('\nFinal Amount Due after interest:', amountDue.toFixed(2));
+
+    // Display the final total amount with interest in the table
+    doc.font(robotoBold).fontSize(12).text('Final Amount Due (with interest):', col3X, tableYPosition)
+      .text('₱ ' + formatNumComma(amountDue), col5X, tableYPosition);
+
+
+
+    //
     // bill Details (aligned to the right)
     doc.font(robotoBold).fontSize(9);
     const rightXPosition = 400;
     const billDetails = [
-      { label: 'Bill #:', value: '######' },
+      { label: 'Bill #:', value: billId },
       { label: 'Date Issued:', value: gbDateIssued.toLocaleDateString() },
       { label: 'Due Date:', value: gbDueDate.toLocaleDateString() },
-      { label: 'Total Due:', value: '₱ ' + formatNumComma(totalAmount) },
+      { label: 'Total Due:', value: '₱ ' + formatNumComma(amountDue) },
     ];
 
     billDetails.forEach((detail, index) => {
@@ -3090,24 +3318,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
         doc.text(detail.value, rightXPosition, yPosition, { align: 'right' }); // Normal text for other rows
       }
     });
-
-
-    tableYPosition += 20;
-
-    // Display the final total amount
-    doc.font('Helvetica-Bold').fontSize(9).text('Total Amount:', col4X, tableYPosition);
-    doc.font(roboto);
-    doc.text('₱ ' + formatNumComma(totalAmount), col5X, tableYPosition);
-
-    tableYPosition += 50;
-    doc.font('Helvetica-Bold').fontSize(12).text('Cash-In place refer to top-right corner of this page', 50, tableYPosition, { align: 'left' });
-    tableYPosition += 20;
-    doc.text('Online Payment Paymongo', 50, tableYPosition);
-
-
     //
-
-    //doc.end();
   } catch (error) {
     console.error('Error fetching data:', error);
     doc.fontSize(14).text('Error fetching data for the bill.', { align: 'left' });
@@ -3116,8 +3327,20 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
   doc.end();
 });
 
+///////////////////////////////////////
+//fetch total Due amount
+app.post('/fetch_total_due', authenticateToken, async (req, res) => {
+  const { gb_Id } = req.body;
 
+  try {
 
+  } catch (error) {
+    console.error('Error fetching PDFs:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//upload_pdf
 app.post('/upload_pdf', authenticateToken, async (req, res) => {
   const { billId, pdfData } = req.body;
 
