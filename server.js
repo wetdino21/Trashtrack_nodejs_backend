@@ -1603,17 +1603,19 @@ app.post('/arrival_notif', authenticateToken, async (req, res) => {
     const pickupDateOnly = new Date(booking.bk_date).toLocaleDateString(); // Extract only the date part
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); // Format current time to HH:MM
 
-    const message = `Waste Pickup Truck has arrived.\n\n` +
+    const message = `Waste Pickup Truck has arrived 🚛.\n` +
+      `------------------------------------------\n` +
+      `BOOKING# ${bk_id}\n\n` +
       `Dear ${booking.bk_fullname},\n\n` +
-      `We are pleased to inform you that the truck has arrived at your pickup location!\n\n` +
-      `Pickup Location: ${fullAddress}\n` +
-      `Date: ${pickupDateOnly}  ${currentTime}\n\n` +
-      `Please be prepared for waste collection at your designated spot. Ensure that all waste for collection is accessible and ready for pickup.\n\n` +
-      `Thank you for your cooperation!\n\nBest regards,\nTrashTrack Team`;
+      `Please be prepared for waste collection at your designated spot!\n\n` +
+      `📍 Pickup Location: ${fullAddress}\n\n` +
+      `Thank you for your cooperation 💜`;
+    //`Date: ${pickupDateOnly}  ${currentTime}\n\n` +
+    //`Please be prepared for waste collection at your designated spot. Ensure that all waste for collection is accessible and ready for pickup.\n\n`;
 
     const notificationResult = await pool.query(
-      'INSERT INTO notification (notif_message, emp_id, cus_id) VALUES ($1, $2, $3) RETURNING *',
-      [message, id, booking.cus_id]
+      'INSERT INTO notification (notif_message, emp_id, cus_id, bk_id) VALUES ($1, $2, $3, $4) RETURNING *',
+      [message, id, booking.cus_id, bk_id]
     );
 
     res.json({ notification: notificationResult.rows[0] });
@@ -2178,12 +2180,15 @@ app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
   }
 });
 
+
+
 // Fetch all bill
 app.post('/fetch_bill', authenticateToken, async (req, res) => {
   const cusId = req.user.id; // Assuming user ID is available after authentication
 
   try {
     // Fetch bills associated with the specified bk_id for the authenticated customer
+
     const result = await pool.query(
       `SELECT gb.* FROM GENERATE_BILL gb
        JOIN BOOKING b ON gb.BK_ID = b.BK_ID
@@ -2191,8 +2196,79 @@ app.post('/fetch_bill', authenticateToken, async (req, res) => {
       [cusId, 'Unpaid']
     );
 
+    // const result = await pool.query(
+    //   `SELECT gb.*, 
+    //           (SUM(bw.bw_total_price)) AS amount_due
+    //    FROM GENERATE_BILL gb
+    //    JOIN BOOKING b ON gb.BK_ID = b.BK_ID
+    //    JOIN BOOKING_WASTE bw ON bw.BK_ID = b.BK_ID
+    //    WHERE b.CUS_ID = $1 AND gb.gb_status = $2
+    //    GROUP BY gb.BK_ID, gb.GB_ID, gb.gb_tax, gb.gb_status
+    //    ORDER BY gb_date_due
+    //   `,
+    //   [cusId, 'Unpaid']
+    // );
+
     // Check if any bill data was found
     if (result.rows.length > 0) {
+
+      // const Datetoday = new Date().setHours(0, 0, 0, 0); // Today's date at midnight
+      // const Date_today = new Date(Datetoday);
+      // result.rows.forEach(row => {
+      //   const taxRate = row.gb_tax / 100; // Convert tax to decimal
+      //   let amount_due = parseFloat(row.amount_due);
+      //   //let amount_due = row.amount_due; // Amount due before VAT
+      //   const vat = amount_due * taxRate; // Calculate VAT
+      //   amount_due += vat; // Add VAT to amount due
+
+      //   // Calculate due dates for interest application
+      //   const dateIssued = new Date(row.gb_date_issued).setHours(0, 0, 0, 0);
+      //   const leadDays = row.gb_lead_days;
+      //   const dueDate = new Date(dateIssued);
+      //   dueDate.setDate(dueDate.getDate() + leadDays); // Calculate due date
+
+      //   const accrualPeriod = row.gb_accrual_period;
+      //   const suspendPeriod = row.gb_suspend_period;
+      //   const interest = row.gb_interest;
+
+      //   // Check if today is past the due date
+      //   if (Date_today > dueDate) {
+      //     console.log(`\nBill ID: ${row.gb_id}`);
+      //     console.log('Amount after VAT: ₱' + amount_due.toFixed(2));
+      //     console.log('Today is after the due date, interest will be applied.');
+
+      //     // Apply interest for the first time after the due date
+      //     let interestAppliedCount = 0;  // To count how many times interest is applied
+      //     let interestAmount = amount_due * (interest / 100);
+      //     amount_due += interestAmount; // Add interest
+      //     interestAppliedCount += 1;
+
+      //     console.log(`First interest applied: ₱${interestAmount.toFixed(2)}`);
+      //     console.log('New Amount Due after first interest:', amount_due.toFixed(2));
+
+      //     // Calculate accrual date and suspension date
+      //     let accrualDate = new Date(dueDate);
+      //     accrualDate.setDate(accrualDate.getDate() + accrualPeriod);
+      //     let suspendDate = new Date(dueDate);
+      //     suspendDate.setDate(suspendDate.getDate() + suspendPeriod);
+
+      //     // Continue applying interest until the suspension date
+      //     while (Date_today >= accrualDate && accrualDate <= suspendDate) {
+      //       interestAmount = amount_due * (interest / 100);
+      //       amount_due += interestAmount; // Add interest
+
+
+      //       console.log(`Accrued interest applied: ₱${interestAmount.toFixed(2)}`);
+      //       console.log('New Amount Due after accrued interest:', amount_due.toFixed(2));
+
+      //       // Move to the next accrual period
+      //       accrualDate.setDate(accrualDate.getDate() + accrualPeriod);
+      //     }
+      //   }
+
+      //   console.log(`Final Amount Due after interest for Bill ID ${row.gb_id}: ₱${amount_due.toFixed(2)}`);
+      // });
+
       res.json(result.rows); // Return the bills as a response
     } else {
       console.error('No bills found for the specified booking ID');
@@ -2217,7 +2293,11 @@ app.post('/fetch_bill_details', authenticateToken, async (req, res) => {
 
     // Check if any bill data was found
     if (result.rows.length > 0) {
-      res.json(result.rows[0]); // Return the bills as a response
+      const amount_due = await fetchTotalAmountDue(result.rows[0].gb_id);
+      console.log(amount_due);
+      // Include the amount_due in the response
+      const billDetails = { ...result.rows[0], amount_due };
+      res.json(billDetails);
     } else {
       console.error('No bills found ');
       res.status(404).json({ error: 'No bills found ' });
@@ -2228,12 +2308,95 @@ app.post('/fetch_bill_details', authenticateToken, async (req, res) => {
   }
 });
 
+// Fetch total amount due
+async function fetchTotalAmountDue(gb_id) {
+  try {
+    const result = await pool.query(
+      `SELECT gb.*, 
+              (SUM(bw.bw_total_price)) AS amount_due
+       FROM GENERATE_BILL gb
+       JOIN BOOKING b ON gb.BK_ID = b.BK_ID
+       JOIN BOOKING_WASTE bw ON bw.BK_ID = b.BK_ID
+       WHERE gb.GB_ID = $1
+       GROUP BY gb.BK_ID, gb.GB_ID, gb.gb_tax, gb.gb_status`,
+      [gb_id]
+    );
+
+    // Check if any bill data was found
+    if (result.rows.length > 0) {
+      const row = result.rows[0];
+      const Datetoday = new Date().setHours(0, 0, 0, 0); // Today's date at midnight
+      const Date_today = new Date(Datetoday);
+
+      const taxRate = row.gb_tax / 100; // Convert tax to decimal
+      let amount_due = parseFloat(row.amount_due);
+      //let amount_due = row.amount_due; // Amount due before VAT
+      const vat = amount_due * taxRate; // Calculate VAT
+      amount_due += vat; // Add VAT to amount due
+
+      // Calculate due dates for interest application
+      const dateIssued = new Date(row.gb_date_issued).setHours(0, 0, 0, 0);
+      const leadDays = row.gb_lead_days;
+      const dueDate = new Date(dateIssued);
+      dueDate.setDate(dueDate.getDate() + leadDays); // Calculate due date
+
+      const accrualPeriod = row.gb_accrual_period;
+      const suspendPeriod = row.gb_suspend_period;
+      const interest = row.gb_interest;
+
+      // Check if today is past the due date
+      if (Date_today > dueDate) {
+        // console.log(`\nBill ID: ${row.gb_id}`);
+        // console.log('Amount after VAT: ₱' + amount_due.toFixed(2));
+        // console.log('Today is after the due date, interest will be applied.');
+
+        // Apply interest for the first time after the due date
+        let interestAppliedCount = 0;  // To count how many times interest is applied
+        let interestAmount = amount_due * (interest / 100);
+        amount_due += interestAmount; // Add interest
+        interestAppliedCount += 1;
+
+        // console.log(`First interest applied: ₱${interestAmount.toFixed(2)}`);
+        // console.log('New Amount Due after first interest:', amount_due.toFixed(2));
+
+        // Calculate accrual date and suspension date
+        let accrualDate = new Date(dueDate);
+        accrualDate.setDate(accrualDate.getDate() + accrualPeriod);
+        let suspendDate = new Date(dueDate);
+        suspendDate.setDate(suspendDate.getDate() + suspendPeriod);
+
+        // Continue applying interest until the suspension date
+        while (Date_today >= accrualDate && accrualDate <= suspendDate) {
+          interestAmount = amount_due * (interest / 100);
+          amount_due += interestAmount; // Add interest
+
+
+          // console.log(`Accrued interest applied: ₱${interestAmount.toFixed(2)}`);
+          // console.log('New Amount Due after accrued interest:', amount_due.toFixed(2));
+
+          // Move to the next accrual period
+          accrualDate.setDate(accrualDate.getDate() + accrualPeriod);
+        }
+      }
+
+      console.log(`Final Amount Due after interest for Bill ID ${row.gb_id}: ₱${amount_due.toFixed(2)}`);
+      return parseFloat(amount_due.toFixed(2)); // Return the final amount due
+    } else {
+      console.error('No bills found for the specified booking ID');
+      //throw new Error('No bills found for the specified booking ID');
+    }
+  } catch (error) {
+    console.error('Error fetching total amount due:', error.message);
+    throw new Error('Database error');
+  }
+}
+
 //get payment
 app.post('/fetch_payment', authenticateToken, async (req, res) => {
   const cusId = req.user.id;
 
   try {
-    const result = await pool.query(`SELECT p.*,b.bk_id FROM PAYMENT p JOIN generate_bill gb ON gb.gb_id = p.gb_id JOIN booking b ON gb.bk_id = b.bk_id WHERE b.cus_id = $1`, [cusId]);
+    const result = await pool.query(`SELECT p.*,b.bk_id FROM PAYMENT p JOIN generate_bill gb ON gb.gb_id = p.gb_id JOIN booking b ON gb.bk_id = b.bk_id WHERE b.cus_id = $1  ORDER BY p_date_paid DESC`, [cusId]);
 
     // Check if any user data was found
     if (result.rows.length > 0) {
@@ -2272,7 +2435,7 @@ app.post('/fetch_pdf_bills', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT bd_created_at,
-        bd_total_amnt, bd_file FROM bill_document WHERE gb_id = $1`, [gb_id]);
+        bd_total_amnt, bd_file FROM bill_document WHERE gb_id = $1 ORDER BY bd_created_at DESC`, [gb_id]);
 
     if (result.rows.length > 0) {
       // Map over all rows to convert PDF data to base64
@@ -2694,14 +2857,17 @@ const encodedSecretKey = Buffer.from(PAYMONGO_SECRET_KEY).toString('base64');
 // Payment link session endpoint
 app.post('/payment_link_Session', authenticateToken, async (req, res) => {
   const { email } = req.user;
-  const { gb_id, amount } = req.body; // The amount in centavos
-
-  //console.log(gb_id);
-  if (!amount || amount <= 0) {
-    return res.status(400).json({ error: 'Invalid amount' });
-  }
+  const { gb_id } = req.body; // The amount in centavos
 
   try {
+
+    const dbAmount_due = await fetchTotalAmountDue(gb_id);
+    const amount_due = Math.round(dbAmount_due * 100);
+    console.log(amount_due);
+    if (!amount_due || amount_due <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+
     const result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
 
     if (result.rows.length > 0) {
@@ -2728,7 +2894,7 @@ app.post('/payment_link_Session', authenticateToken, async (req, res) => {
               line_items: [
                 {
                   name: 'Waste Pickup Service',
-                  amount: amount,
+                  amount: amount_due, // in centavos
                   currency: 'PHP',
                   //description: 'Billing Id: ' + gb_id,
                   quantity: 1,
@@ -2860,6 +3026,20 @@ app.post('/webhooks/paymongo', async (req, res) => {
           );
           if (updateResult.rowCount > 0) {
             console.log('Payment details inserted successfully.');
+            //
+            // const response = await axios.get(`https://api.paymongo.com/v1/checkout_sessions/${checkoutId}`, {
+            //   headers: {
+            //     Authorization: `Basic ${encodedSecretKey}`,
+            //     'Content-Type': 'application/json',
+            //   },
+            // });
+            // if (response.status === 200) {
+            //   console.log('Payment details inserted successfully.');
+            //   console.log('Checkout session details:', response.data);
+            // } else {
+            //   console.log('Failed to fetch checkout session:', response.status);
+            // }
+            //
           }
 
         } catch (err) {
@@ -3074,7 +3254,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
     doc.text('₱ ' + formatNumComma(VAT), col5X, tableYPosition);
 
     // total amount after tax
-    const totalAmount = sumAmount + VAT;
+    let amountDue = sumAmount + VAT;
     //res.setHeader('totalAmount', totalAmount.toFixed(2));
     const gbDateIssued = tableData[0].gb_date_issued;
     const gbDueDate = tableData[0].gb_date_due;
@@ -3110,7 +3290,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
     // Display the final total amount
     doc.font('Helvetica-Bold').fontSize(9).text('Total Amount:', col4X, tableYPosition);
     doc.font(roboto);
-    doc.text('₱ ' + formatNumComma(totalAmount), col5X, tableYPosition);
+    doc.text('₱ ' + formatNumComma(amountDue), col5X, tableYPosition);
 
     tableYPosition += 20;
     // doc.font('Helvetica-Bold').fontSize(12).text('Cash-In place refer to top-right corner of this page', 50, tableYPosition + 120, { align: 'left' });
@@ -3118,17 +3298,17 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
 
     //added interest
-    console.log('\n11111111111111111111111111111111111111111111111');
+    //console.log('\n11111111111111111111111111111111111111111111111');
     let dueDate = addDaysToDate(dateIssued, leadDays);
     let accrualDate = addDaysToDate(dueDate, accrualPeriod);
     let suspendDate = addDaysToDate(dueDate, suspendPeriod);
-    console.log('issue date: ', dateIssued, leadDays);
-    console.log('due Date: ', dueDate);
-    console.log('accrual: ', accrualPeriod);
-    console.log('suspend: ', suspendPeriod);
-    console.log('interest: ', interest);
-    console.log('accrualDate: ', accrualDate);
-    console.log('suspendDate: ', suspendDate);
+    // console.log('issue date: ', dateIssued, leadDays);
+    // console.log('due Date: ', dueDate);
+    // console.log('accrual: ', accrualPeriod);
+    // console.log('suspend: ', suspendPeriod);
+    // console.log('interest: ', interest);
+    // console.log('accrualDate: ', accrualDate);
+    // console.log('suspendDate: ', suspendDate);
 
 
     // //convert date
@@ -3172,10 +3352,21 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Convert dates to yyyy-mm-dd for comparison
-    let Date_today = new Date().setHours(0, 0, 0, 0); // Today's date at midnight
+    let Date_bill = new Date().setHours(0, 0, 0, 0); // Today's date at midnight
     let Date_due = new Date(dueDate).setHours(0, 0, 0, 0);
     let Date_accrual = new Date(accrualDate).setHours(0, 0, 0, 0);
     let Date_suspend = new Date(suspendDate).setHours(0, 0, 0, 0);
+
+    const paidResult = await pool.query(
+      `SELECT p_date_paid FROM PAYMENT WHERE gb_id = $1 AND p_status = $2`, [billId, 'paid']
+    );
+
+    if (paidResult.rows.length > 0) {
+      const date = paidResult.rows[0].p_date_paid;
+      Date_bill = new Date(date).setHours(0, 0, 0, 0);
+      console.log('Already Paid generating bill PDF');
+    }
+
 
     // let amountDue = totalAmount;
 
@@ -3211,30 +3402,32 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     /////////////////////////////////////////////////////////////////////////////////////////////////
     // Added interest calculation section
-    let interestAppliedCount = 0;  // To count how many times interest is applied
-    let amountDue = totalAmount;   // Start with the total amount
 
-    tableYPosition += 20;
-    // Table headers
-    doc.font('Helvetica').fontSize(9)
-      .text('Date Interest Added', col2X, tableYPosition)
-      .text('Description', col4X, tableYPosition)
-      .text('Amount', col5X, tableYPosition);
-
-
-    // Draw the bottom line for the table
-    doc.moveTo(col2X, tableYPosition + 15)
-      .lineTo(550, tableYPosition + 15)
-      .stroke();
-
-    tableYPosition += 20;
     // If today's date is past the due date, calculate the additional interest
-    if (Date_today > Date_due) {
-      console.log('Amount after tax: ', amountDue);
-      console.log('Today is after the due date, interest will be applied.');
+    if (Date_bill > Date_due) {
+      // console.log('Amount after tax: ', amountDue);
+      // console.log('Today is after the due date, interest will be applied.');
+
+      let interestAppliedCount = 0;  // To count how many times interest is applied
+      //let amountDue = amountDue;   // Start with the total amount
+
+      tableYPosition += 20;
+      // Table headers
+      doc.font('Helvetica').fontSize(9)
+        .text('Date Interest Added', col2X, tableYPosition)
+        .text('Description', col4X, tableYPosition)
+        .text('Amount', col5X, tableYPosition);
+
+
+      // Draw the bottom line for the table
+      doc.moveTo(col2X, tableYPosition + 15)
+        .lineTo(550, tableYPosition + 15)
+        .stroke();
+
+      tableYPosition += 20;
 
       // First interest application after due date
-      let interestAmount = totalAmount * (interest / 100);
+      let interestAmount = amountDue * (interest / 100);
       amountDue += interestAmount;
       interestAppliedCount += 1;
 
@@ -3246,12 +3439,12 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
         .text('₱ ' + formatNumComma(interestAmount), col5X, tableYPosition); // Interest amount
       tableYPosition += 20;
 
-      console.log('Initial interest:', interestAmount);
-      console.log('New Amount Due:', amountDue);
+      // console.log('Initial interest:', interestAmount);
+      // console.log('New Amount Due:', amountDue);
 
       // Continue applying interest in accrual periods until either today's date is past the suspension date or we reach the accrual date
-      while (Date_today >= Date_accrual && Date_accrual <= Date_suspend) {
-        console.log('\nApplying additional interest as we are still within the accrual period.');
+      while (Date_bill >= Date_accrual && Date_accrual <= Date_suspend) {
+        // console.log('\nApplying additional interest as we are still within the accrual period.');
 
         // Apply interest for each accrual period
         interestAmount = amountDue * (interest / 100);
@@ -3264,32 +3457,32 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
           .text('₱ ' + formatNumComma(interestAmount), col5X, tableYPosition); // Interest amount
         tableYPosition += 20;
 
-        console.log('Accrual Period Interest:', interestAmount);
-        console.log('Updated Amount Due:', amountDue);
+        // console.log('Accrual Period Interest:', interestAmount);
+        // console.log('Updated Amount Due:', amountDue);
 
         // Move to the next accrual period
         Date_accrual = new Date(addDaysToDate(Date_accrual, accrualPeriod)).setHours(0, 0, 0, 0);
-        console.log('Next Accrual Date:', new Date(Date_accrual).toDateString());
+        //console.log('Next Accrual Date:', new Date(Date_accrual).toDateString());
       }
-    }
 
-    // Draw the bottom line for the table
-    doc.moveTo(col2X, tableYPosition)
-      .lineTo(550, tableYPosition)
-      .stroke();
+      // Draw the bottom line for the table
+      doc.moveTo(col2X, tableYPosition)
+        .lineTo(550, tableYPosition)
+        .stroke();
 
       tableYPosition += 10;
-    // Display interest summary if interest was applied
-    if (interestAppliedCount > 0) {
-      doc.text(`Interest Applied: ${interestAppliedCount} time/s`, col4X, tableYPosition);
-      tableYPosition += 20;
+      // Display interest summary if interest was applied
+      if (interestAppliedCount > 0) {
+        doc.text(`Interest Applied: ${interestAppliedCount} time/s`, col4X, tableYPosition);
+        tableYPosition += 20;
+      }
+
+      console.log('\nFinal Amount Due after interest:', amountDue.toFixed(2));
+
+      // Display the final total amount with interest in the table
+      doc.font(robotoBold).fontSize(11).text('Final Amount Due (with interest):', col3X, tableYPosition)
+        .text('₱ ' + formatNumComma(amountDue), col5X, tableYPosition);
     }
-
-    console.log('\nFinal Amount Due after interest:', amountDue.toFixed(2));
-
-    // Display the final total amount with interest in the table
-    doc.font(robotoBold).fontSize(12).text('Final Amount Due (with interest):', col3X, tableYPosition)
-      .text('₱ ' + formatNumComma(amountDue), col5X, tableYPosition);
 
 
 
@@ -3328,25 +3521,15 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 });
 
 ///////////////////////////////////////
-//fetch total Due amount
-app.post('/fetch_total_due', authenticateToken, async (req, res) => {
-  const { gb_Id } = req.body;
-
-  try {
-
-  } catch (error) {
-    console.error('Error fetching PDFs:', error.message);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
 
 //upload_pdf
 app.post('/upload_pdf', authenticateToken, async (req, res) => {
   const { billId, pdfData } = req.body;
 
   //
-  passTotalDue = 0;
+  let passTotalDue = 0;
   try {
+    passTotalDue = await fetchTotalAmountDue(billId);
     let insertPDF = false;
     const checkExist = await pool.query(
       `SELECT gb_id FROM bill_document WHERE gb_id = $1`, [billId]);
@@ -3370,7 +3553,6 @@ app.post('/upload_pdf', authenticateToken, async (req, res) => {
         [passTotalDue, billId, buffer]); // Insert buffer instead of base64 string
 
       if (insertPDF.rowCount > 0) {
-        passTotalDue = 0;
         console.log('Successfully inserted');
         res.status(200).json({ message: 'PDF uploaded successfully' });
       }
