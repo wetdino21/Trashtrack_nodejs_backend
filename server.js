@@ -1638,12 +1638,49 @@ app.post('/read_notification', authenticateToken, async (req, res) => {
   }
 });
 
-//total request
-app.post('/total_pickup_request', authenticateToken, async (req, res) => {
+//total cus request
+app.post('/total_cus_pickup_request', authenticateToken, async (req, res) => {
   const id = req.user.id;
   try {
     const result = await pool.query('SELECT COUNT(CUS_ID) AS total FROM BOOKING WHERE cus_id = $1', [id]);
-    console.log(result.rows[0].total);
+    res.json({ total: result.rows[0].total }); // Access the total count
+  } catch (error) {
+    console.error('Error handling total request:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//total pickup
+app.post('/total_hauler_pickup', authenticateToken, async (req, res) => {
+  const id = req.user.id;
+  try {
+    const result = await pool.query('SELECT COUNT(EMP_ID) AS total FROM BOOKING WHERE emp_id = $1 AND bk_status = $2', [id, 'Collected']);
+    res.json({ total: result.rows[0].total }); // Access the total count
+  } catch (error) {
+    console.error('Error handling total pickup:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//total cus waste collected
+app.post('/total_cus_waste_collected', authenticateToken, async (req, res) => {
+  const id = req.user.id;
+  try {
+    const result = await pool.query(`SELECT SUM(bw.bw_total_unit) AS total FROM BOOKING b 
+      JOIN BOOKING_WASTE bw ON b.bk_id = bw.bk_id WHERE b.cus_id = $1 AND bw.bw_unit = $2 AND b.bk_status = $3`, [id, 'kg', 'Collected']);
+    res.json({ total: result.rows[0].total }); // Access the total count
+  } catch (error) {
+    console.error('Error handling total request:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//total haul waste collected
+app.post('/total_haul_waste_collected', authenticateToken, async (req, res) => {
+  const id = req.user.id;
+  try {
+    const result = await pool.query(`SELECT SUM(bw.bw_total_unit) AS total FROM BOOKING b 
+      JOIN BOOKING_WASTE bw ON b.bk_id = bw.bk_id WHERE b.emp_id = $1 AND bw.bw_unit = $2 AND b.bk_status = $3`, [id, 'kg', 'Collected']);
     res.json({ total: result.rows[0].total }); // Access the total count
   } catch (error) {
     console.error('Error handling total request:', error.message);
@@ -2064,13 +2101,45 @@ app.post('/booking_cancel', authenticateToken, async (req, res) => {
   }
 });
 
-//fetch booking all pending
-app.post('/fetch_pickup_booking', authenticateToken, async (req, res) => {
+//fetch booking today pending
+app.post('/fetch_today_booking', authenticateToken, async (req, res) => {
   //const userId = req.user.id;  
 
   try {
     const result = await pool.query(
-      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 ORDER BY bk_date ASC',
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND bk_date::date <= CURRENT_DATE ORDER BY bk_date ASC',
+      ['Pending']
+    );
+    if (result.rows.length > 0) {
+      // Extract all booking IDs (bk_id) for the user
+      const bookingIds = result.rows.map(booking => booking.bk_id);
+
+      // Fetch the booking waste for the user's booking IDs
+      const result2 = await pool.query(
+        'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
+        [bookingIds]
+      );
+      // Combine booking data and waste data into one response object
+      res.status(200).json({
+        booking: result.rows,
+        wasteTypes: result2.rows
+
+      });
+    } else {
+      res.status(404).json({ error: 'No bookings found' });
+    }
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//fetch booking upcoming pending
+app.post('/fetch_upcoming_booking', authenticateToken, async (req, res) => {
+
+  try {
+    const result = await pool.query(
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND bk_date::date > CURRENT_DATE ORDER BY bk_date ASC',
       ['Pending']
     );
     if (result.rows.length > 0) {
