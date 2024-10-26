@@ -3192,15 +3192,19 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
   // Complete Address of the Binaliw Cebu Dumpsite (aligned to the right)
   doc.font('Helvetica').fontSize(9);
   let addressYPosition = yHeaderPosition;
-  doc.text('Binaliw Cebu Dumpsite', 400, addressYPosition, { align: 'right' });
-  doc.text('Cebu City, Cebu', 400, addressYPosition + 15, { align: 'right' });
-  doc.text('Philippines', 400, addressYPosition + 30, { align: 'right' });
+  doc.text('TrashTrack Company', 400, addressYPosition, { align: 'right' })
+  addressYPosition += 15;
+  doc.text('Binaliw Landfill', 400, addressYPosition, { align: 'right' });
+  addressYPosition += 15;
+  doc.text('Cebu City, 6000 Cebu, Philippines', 400, addressYPosition, { align: 'right' });
+  addressYPosition += 15;
+  doc.text('09916387667', 400, addressYPosition, { align: 'right' });
 
-  // Billing Statement Title (Centered)
-  doc.font('Helvetica-Bold').fontSize(16).text('Billing Statement', 50, addressYPosition + 50, { align: 'center' });
+  // Billing Statement (Centered)
+  doc.font('Helvetica-Bold').fontSize(16).text('Billing Statement', 50, addressYPosition + 30, { align: 'center' });
 
   // doc.font('Helvetica').fontSize(9);
-  let billDetailsYPosition = addressYPosition + 80;
+  let billDetailsYPosition = addressYPosition + 50;
 
   // Display bk_id and billId at the left
   try {
@@ -3242,7 +3246,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
     // Display bk_id and billId
     const bkId = tableData[0].bk_id;
     //doc.fontSize(9).text(`Bill ID: ${billId}`, 50, billDetailsYPosition + 10);
-    doc.fontSize(9).text(`Booking# ${bkId}`, 50, billDetailsYPosition + 20);
+    doc.font('Helvetica').fontSize(9).text(`Booking# ${bkId}`, 50, billDetailsYPosition + 20);
 
     // Add Terms section (Left aligned)
     let termsYPosition = billDetailsYPosition + 50;
@@ -3297,12 +3301,13 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
     });
 
     // Draw the bottom line for the table
-    doc.moveTo(50, tableYPosition + 15)
-      .lineTo(550, tableYPosition + 15)
+    tableYPosition += 10;
+    doc.moveTo(50, tableYPosition + 10)
+      .lineTo(550, tableYPosition + 10)
       .stroke();
 
     // Move the yPosition down for the total amount display
-    tableYPosition += 30;
+    tableYPosition += 20;
 
     // Display the total amount aligned with the "Total Price" column
     doc.font('Helvetica');
@@ -3358,10 +3363,10 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     // Display the final total amount
     doc.font('Helvetica-Bold').fontSize(9).text('Total Amount:', col4X, tableYPosition);
-    doc.font(roboto);
+    doc.font(robotoBold);
     doc.text('₱ ' + formatNumComma(amountDue), col5X, tableYPosition);
 
-    tableYPosition += 20;
+    tableYPosition += 10;
     // doc.font('Helvetica-Bold').fontSize(12).text('Cash-In place refer to top-right corner of this page', 50, tableYPosition + 120, { align: 'left' });
     // doc.text('Online Payment Paymongo', 50, tableYPosition + 140);
 
@@ -3549,10 +3554,24 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
       console.log('\nFinal Amount Due after interest:', amountDue.toFixed(2));
 
       // Display the final total amount with interest in the table
-      doc.font(robotoBold).fontSize(11).text('Final Amount Due (with interest):', col3X, tableYPosition)
+      doc.font(robotoBold).fontSize(11).text('Total Amount Due :', col4X, tableYPosition)
         .text('₱ ' + formatNumComma(amountDue), col5X, tableYPosition);
     }
 
+    //for payment option
+    tableYPosition += 50;
+    doc.font(roboto).fontSize(9)
+      .text('Payment Options:', 50, tableYPosition, { align: 'left' })
+      .text('\n')
+      .fontSize(10).font(robotoBold)
+      .text('Online Payment:')
+      .font(roboto).fontSize(9)
+      .text('   - Pay through the TrashTrack app with PayMongo.')
+      .text('\n')
+      .fontSize(10).font(robotoBold)
+      .text('In-Person Payment (Walk-In):')
+      .font(roboto).fontSize(9)
+      .text('   - Cash payments are accepted at our location. Please refer to the top right of this page.');
 
 
     //
