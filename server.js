@@ -1815,6 +1815,54 @@ app.get('/waste_category', async (req, res) => {
   }
 });
 
+//check if 3 book
+app.post('/check_book_limit', authenticateToken, async (req, res) => {
+  const userId = req.user.id;  // Assuming the user ID is stored in the token
+  try {
+    const result = await pool.query(
+      'SELECT COUNT(bk_id) FROM booking WHERE (bk_status = $1 OR bk_status = $2) AND cus_id = $3',
+      ['Pending', 'Ongoing', userId]
+    );
+
+    // Convert count to an integer for accurate comparison
+    const bookingCount = parseInt(result.rows[0].count, 10);
+
+    if (bookingCount >= 3) {  // Check if the limit is reached
+      return res.status(429).json({ error: 'Booking limit reached', limit: 3 });
+    }
+
+    // Success - booking allowed
+    res.status(200).json({ message: 'Booking allowed' });
+
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//check unpaid bill
+app.post('/check_unpaid_bill', authenticateToken, async (req, res) => {
+  const userId = req.user.id;  // Assuming the user ID is stored in the token
+  try {
+    const result = await pool.query(
+      'SELECT COUNT(gb.gb_id) FROM GENERATE_BILL gb JOIN BOOKING b ON gb.bk_id = b.bk_id WHERE gb.gb_status = $1  AND bk.cus_id = $2',
+      ['Unpaid', userId]
+    );
+
+    if (result.rows.length > 0) {
+      return res.status(429).json({ error: 'Pending payment' });
+    }
+
+    // Success - booking allowed
+    res.status(200).json({ message: 'Booking allowed' });
+
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
 // booking
 app.post('/booking', authenticateToken, async (req, res) => {
   const id = req.user.id;
@@ -2363,7 +2411,7 @@ app.post('/fetch_bill_details', authenticateToken, async (req, res) => {
     // Check if any bill data was found
     if (result.rows.length > 0) {
       const amount_due = await fetchTotalAmountDue(result.rows[0].gb_id);
-      console.log(amount_due);
+      //console.log(amount_due);
       // Include the amount_due in the response
       const billDetails = { ...result.rows[0], amount_due };
       res.json(billDetails);
@@ -2399,6 +2447,12 @@ async function fetchTotalAmountDue(gb_id) {
 
       const taxRate = row.gb_tax / 100; // Convert tax to decimal
       let amount_due = parseFloat(row.amount_due);
+      const addFees = Number(row.gb_add_fees);
+      const addNote = row.gb_note;
+
+      if (addNote != null && addFees > 0) {
+        amount_due += addFees;
+      }
       //let amount_due = row.amount_due; // Amount due before VAT
       const vat = amount_due * taxRate; // Calculate VAT
       amount_due += vat; // Add VAT to amount due
@@ -2448,7 +2502,7 @@ async function fetchTotalAmountDue(gb_id) {
         }
       }
 
-      console.log(`Final Amount Due after interest for Bill ID ${row.gb_id}: ₱${amount_due.toFixed(2)}`);
+      console.log(`Calculation Final Amount Due after interest for Bill ID ${row.gb_id}: ₱${amount_due.toFixed(2)}`);
       return parseFloat(amount_due.toFixed(2)); // Return the final amount due
     } else {
       console.error('No bills found for the specified booking ID');
@@ -3223,7 +3277,10 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
         gb.gb_accrual_period,
         gb.gb_suspend_period,
         gb.gb_interest,
-        gb.gb_tax 
+        gb.gb_tax,
+        gb.gb_add_fees,
+        gb.gb_note 
+
       FROM
         public.generate_bill gb
       JOIN
@@ -3258,6 +3315,8 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
     const accrualPeriod = tableData[0].gb_accrual_period;
     const suspendPeriod = tableData[0].gb_suspend_period;
     const interest = tableData[0].gb_interest;
+    const addNote = tableData[0].gb_note;
+    const addFees = tableData[0].gb_add_fees;
     const termsText = `The bill shall be due for payment and collection (${leadDays}) days after issuance. Failure by the customer to make payment without valid and justifiable reason will result in a late payment charge of (${interest}% interest) per ${accrualPeriod}days applied to any outstanding balance until ${suspendPeriod}days. Additionally, TrashTrack reserves the right to stop collecting waste materials from the customer's premises if payment is not made, preventing further processing and disposal services.`;
 
     termsYPosition += 20;
@@ -3275,7 +3334,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     // Table Headers
     doc.fontSize(9);
-    doc.text('Waste Type', col1X, tableYPosition);
+    doc.text('Description', col1X, tableYPosition);
     doc.text('Unit', col2X, tableYPosition);
     doc.text('Total Unit', col3X, tableYPosition);
     doc.text('Unit Price', col4X, tableYPosition);
@@ -3299,6 +3358,17 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
       doc.text('₱ ' + formatNumComma(row.bw_total_price), col5X, tableYPosition); // Format total price
       sumAmount += Number(row.bw_total_price);
     });
+
+    // additional fee
+    if (addFees > 0 && addNote != null) {
+      tableYPosition += 20;
+      doc.text(addNote, col1X, tableYPosition);
+      doc.text('-', col2X, tableYPosition);
+      doc.text('-', col3X, tableYPosition);
+      doc.text('-', col4X, tableYPosition);
+      doc.text('₱ ' + formatNumComma(addFees), col5X, tableYPosition);
+      sumAmount += Number(addFees);
+    }
 
     // Draw the bottom line for the table
     tableYPosition += 10;
@@ -3551,7 +3621,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
         tableYPosition += 20;
       }
 
-      console.log('\nFinal Amount Due after interest:', amountDue.toFixed(2));
+      console.log('\nGenerated: Final Amount Due after interest:', amountDue.toFixed(2));
 
       // Display the final total amount with interest in the table
       doc.font(robotoBold).fontSize(11).text('Total Amount Due :', col4X, tableYPosition)
