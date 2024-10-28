@@ -1598,6 +1598,9 @@ app.post('/arrival_notif', authenticateToken, async (req, res) => {
     }
 
     const booking = bookingResult.rows[0];
+    if (booking.bk_arrived == true) {
+      return res.status(429).json({ message: 'Already notified' });
+    }
 
     const fullAddress = `${booking.bk_street}, ${booking.bk_brgy}, ${booking.bk_city}, ${booking.bk_province}, ${booking.bk_postal}`;
     const pickupDateOnly = new Date(booking.bk_date).toLocaleDateString(); // Extract only the date part
@@ -1617,8 +1620,12 @@ app.post('/arrival_notif', authenticateToken, async (req, res) => {
       'INSERT INTO notification (notif_message, emp_id, cus_id, bk_id) VALUES ($1, $2, $3, $4) RETURNING *',
       [message, id, booking.cus_id, bk_id]
     );
+    if (notificationResult.rows.length > 0) {
+      const updateBook = await pool.query(`UPDATE BOOKING SET BK_ARRIVED = $1 WHERE BK_ID = $2`, [true, bk_id]);
+      if (updateBook.rowCount > 0)
+        res.json({ notification: notificationResult.rows[0] });
+    }
 
-    res.json({ notification: notificationResult.rows[0] });
   } catch (error) {
     console.error('Error handling arrival notification:', error.message);
     res.status(500).json({ error: 'Database error' });
@@ -2388,7 +2395,6 @@ app.post('/fetch_bill', authenticateToken, async (req, res) => {
 
       res.json(result.rows); // Return the bills as a response
     } else {
-      console.error('No bills found for the specified booking ID');
       res.status(404).json({ error: 'No bills found for the specified booking ID' });
     }
   } catch (error) {
