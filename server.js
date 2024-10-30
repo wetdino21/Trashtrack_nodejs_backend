@@ -1822,20 +1822,33 @@ app.get('/waste_category', async (req, res) => {
   }
 });
 
-//check if 3 book
+// Check if booking limit is reached
 app.post('/check_book_limit', authenticateToken, async (req, res) => {
   const userId = req.user.id;  // Assuming the user ID is stored in the token
   try {
+    // Fetch booking limit
+    const bookLimit = await pool.query(`SELECT BL_MAX_COUNT, BL_STOP FROM BOOKING_LIMIT LIMIT 1`);
+
+    if (bookLimit.rows.length === 0) {
+      return res.status(400).json({ error: "No booking limit data found." });
+    }
+    if (bookLimit.rows[0].bl_stop === true) {
+      return res.status(409).json({ error: "WE dont accept booking at this time" });
+    }
+
+    const maxCount = parseInt(bookLimit.rows[0].bl_max_count, 10); // Convert to integer
+
+    // Fetch the current booking count for the user
     const result = await pool.query(
-      'SELECT COUNT(bk_id) FROM booking WHERE (bk_status = $1 OR bk_status = $2) AND cus_id = $3',
+      'SELECT COUNT(bk_id) AS count FROM booking WHERE (bk_status = $1 OR bk_status = $2) AND cus_id = $3',
       ['Pending', 'Ongoing', userId]
     );
 
-    // Convert count to an integer for accurate comparison
     const bookingCount = parseInt(result.rows[0].count, 10);
 
-    if (bookingCount >= 3) {  // Check if the limit is reached
-      return res.status(429).json({ error: 'Booking limit reached', limit: 3 });
+    // Check if the booking limit is reached
+    if (bookingCount >= maxCount) {
+      return res.status(429).json({ error: 'Booking limit reached' });
     }
 
     // Success - booking allowed
@@ -1852,7 +1865,7 @@ app.post('/check_unpaid_bill', authenticateToken, async (req, res) => {
   const userId = req.user.id;  // Assuming the user ID is stored in the token
   try {
     const result = await pool.query(
-      'SELECT COUNT(gb.gb_id) FROM GENERATE_BILL gb JOIN BOOKING b ON gb.bk_id = b.bk_id WHERE gb.gb_status = $1  AND bk.cus_id = $2',
+      'SELECT gb.gb_id FROM GENERATE_BILL gb JOIN BOOKING b ON gb.bk_id = b.bk_id WHERE gb.gb_status = $1  AND b.cus_id = $2',
       ['Unpaid', userId]
     );
 
@@ -1869,6 +1882,23 @@ app.post('/check_unpaid_bill', authenticateToken, async (req, res) => {
   }
 });
 
+// Fetch booking limit
+app.post('/fetch_book_limit', authenticateToken, async (req, res) => {
+
+  try {
+    const bookLimit = await pool.query(`SELECT * FROM BOOKING_LIMIT`);
+
+    if (bookLimit.rows.length > 0) {
+      return res.status(200).json(bookLimit.rows[0]);
+    }
+    else {
+      return res.status(404).json({ error: 'No bookings limit found' });
+    }
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 
 // booking
 app.post('/booking', authenticateToken, async (req, res) => {
