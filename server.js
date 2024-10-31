@@ -1900,6 +1900,130 @@ app.post('/fetch_book_limit', authenticateToken, async (req, res) => {
   }
 });
 
+// Fetch day limit
+app.post('/fetch_day_limit', authenticateToken, async (req, res) => {
+
+  try {
+    const bookLimit = await pool.query(`WITH daily_counts AS (
+                                          SELECT 
+                                              DATE(bk_date) AS day,
+                                              COUNT(*) AS count_per_day
+                                          FROM 
+                                              booking
+                                          GROUP BY 
+                                              DATE(bk_date)
+                                      )
+                                      SELECT 
+                                          daily_counts.day,
+                                          daily_counts.count_per_day,
+                                          booking_limit.bl_max_day
+                                      FROM 
+                                          daily_counts
+                                      CROSS JOIN 
+                                          booking_limit
+                                      WHERE 
+                                          daily_counts.count_per_day >= booking_limit.bl_max_day
+                                      ORDER BY 
+                                          daily_counts.day;`);
+
+    if (bookLimit.rows.length > 0) {
+      return res.status(200).json(bookLimit.rows);
+    }
+    else {
+      return res.status(404).json({ error: 'No bookings limit found' });
+    }
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Fetch waste limit
+app.post('/fetch_waste_limit', authenticateToken, async (req, res) => {
+  const { date } = req.body;
+
+  try {
+    const bookLimit = await pool.query(`SELECT
+                      bw.wc_id,
+                      wc.wc_name,
+                      COUNT(bw.bw_id) AS bw_count,
+                      wc.wc_max 
+                      FROM
+                      booking b
+                      JOIN
+                      booking_waste bw ON b.bk_id = bw.bk_id
+                      JOIN
+                      waste_category wc ON bw.wc_id = wc.wc_id
+                      WHERE
+                      DATE(b.bk_date) = $1 
+                      GROUP BY
+                      bw.wc_id, wc.wc_name, wc.wc_max 
+                      HAVING
+                      COUNT(bw.bw_id) >= wc.wc_max 
+                      ORDER BY
+                      bw.wc_id;
+                      `, [date]);
+
+    //
+    console.log(bookLimit.rows);
+    return res.status(200).json(bookLimit.rows);
+
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Check if date is from max date
+app.post('/check_date_limit', authenticateToken, async (req, res) => {
+  const { date } = req.body; // Expect the date to be sent in the request body
+
+  if (!date) {
+    return res.status(400).json({ error: 'Date is required' });
+  }
+
+  try {
+    // Ensure the date is in the correct format for PostgreSQL
+    const formattedDate = new Date(date).toISOString().split('T')[0]; // Convert to YYYY-MM-DD
+
+    const bookLimit = await pool.query(`
+       WITH daily_counts AS (
+         SELECT 
+           DATE(bk_date) AS day,
+           COUNT(*) AS count_per_day
+         FROM 
+           booking
+         GROUP BY 
+           DATE(bk_date)
+       )
+       SELECT 
+         daily_counts.day,
+         daily_counts.count_per_day,
+         booking_limit.bl_max_day
+       FROM 
+         daily_counts
+       CROSS JOIN 
+         booking_limit
+       WHERE 
+         daily_counts.day = $1
+       AND 
+         daily_counts.count_per_day >= booking_limit.bl_max_day
+       LIMIT 1;`, [formattedDate]);
+
+    console.log(bookLimit.rows);
+    console.log(date);
+    if (bookLimit.rows.length > 0) {
+      return res.status(200).json({ isExceeding: true }); //bad
+    } else {
+      return res.status(200).json({ isExceeding: false }); //good
+    }
+  } catch (error) {
+    console.error('Error checking date limit:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
 // booking
 app.post('/booking', authenticateToken, async (req, res) => {
   const id = req.user.id;
