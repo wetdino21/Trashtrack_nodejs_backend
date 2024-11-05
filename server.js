@@ -1201,7 +1201,7 @@ app.post('/onOpenApp', authenticateToken, async (req, res) => {
     if (checkCustomerEmail.rowCount > 0) {
       const customer = checkCustomerEmail.rows[0];
       if (customer.cus_status == 'Active') {
-        res.status(200).json({ message: 'User is a customer' });
+        return res.status(200).json({ message: 'User is a customer' });
       }
     }
 
@@ -1218,7 +1218,7 @@ app.post('/onOpenApp', authenticateToken, async (req, res) => {
     if (checkEmployeeEmail.rowCount > 0) {
       const employee = checkEmployeeEmail.rows[0];
       if (employee.emp_status == 'Active') {
-        res.status(201).json({ message: 'User is a employee' });
+        return res.status(201).json({ message: 'User is a employee' });
       }
     }
   } catch (error) {
@@ -1641,6 +1641,23 @@ app.post('/read_notification', authenticateToken, async (req, res) => {
     res.json();
   } catch (error) {
     console.error('Error handling arrival notification:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//fetch status notif
+app.post('/fetch_notif_status', async (req, res) => {
+  const { bkId } = req.body;
+
+  try {
+    const status = await pool.query('SELECT BK_STATUS FROM BOOKING WHERE bk_id = $1', [bkId]);
+    if (status.rows.length > 0) {
+      console.error(status.rows[0]);
+      return res.json(status.rows[0]);
+    }
+    return res.status(404).json();
+  } catch (error) {
+    console.error('Error fetching booking status:', error.message);
     res.status(500).json({ error: 'Database error' });
   }
 });
@@ -2106,36 +2123,89 @@ app.post('/booking', authenticateToken, async (req, res) => {
 
 //fetch booking data
 app.post('/fetch_booking', authenticateToken, async (req, res) => {
-  const userId = req.user.id;  // Assuming the user ID is stored in the token
+  const userId = req.user.id; // Assuming the user ID is stored in the token
+
   try {
-    const result = await pool.query(
-      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE cus_id = $1 ORDER BY bk_date ASC',
-      [userId]
+    // Fetch current bookings (Pending, Ongoing)
+    const resultCurrent = await pool.query(
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE cus_id = $1 AND (bk_status = $2 OR bk_status = $3) ORDER BY bk_date ASC',
+      [userId, 'Pending', 'Ongoing']
     );
 
-    if (result.rows.length > 0) {
-      // Extract all booking IDs (bk_id) for the user
-      const bookingIds = result.rows.map(booking => booking.bk_id);
+    // Extract all current booking IDs (bk_id)
+    const bookingCurrentIds = resultCurrent.rows.map(booking => booking.bk_id);
 
-      // Fetch the booking waste for the user's booking IDs
-      const result2 = await pool.query(
+    // Fetch waste types for current bookings
+    let resultCurrentWaste = { rows: [] };
+    if (bookingCurrentIds.length > 0) {
+      resultCurrentWaste = await pool.query(
         'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
-        [bookingIds]
+        [bookingCurrentIds]
       );
-      // Combine booking data and waste data into one response object
-      res.status(200).json({
-        booking: result.rows,
-        wasteTypes: result2.rows
-
-      });
-    } else {
-      res.status(404).json({ error: 'No bookings found' });
     }
+
+    // Fetch historical bookings (all other statuses)
+    const resultHistory = await pool.query(
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE cus_id = $1 AND bk_status NOT IN ($2, $3) ORDER BY bk_date DESC',
+      [userId, 'Pending', 'Ongoing']
+    );
+
+    // Extract all historical booking IDs (bk_id)
+    const bookingHistoryIds = resultHistory.rows.map(booking => booking.bk_id);
+
+    // Fetch waste types for historical bookings
+    let resultHistoryWaste = { rows: [] };
+    if (bookingHistoryIds.length > 0) {
+      resultHistoryWaste = await pool.query(
+        'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
+        [bookingHistoryIds]
+      );
+    }
+
+    // Combine current and historical booking data into one response object
+    res.status(200).json({
+      booking: resultCurrent.rows,
+      wasteTypes: resultCurrentWaste.rows,
+      booking2: resultHistory.rows,
+      wasteTypes2: resultHistoryWaste.rows
+    });
   } catch (error) {
     console.error('Error fetching booking data:', error.message);
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+// app.post('/fetch_booking', authenticateToken, async (req, res) => {
+//   const userId = req.user.id;  // Assuming the user ID is stored in the token
+//   try {
+//     const result = await pool.query(
+//       'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE cus_id = $1 ORDER BY bk_date ASC',
+//       [userId]
+//     );
+
+//     if (result.rows.length > 0) {
+//       // Extract all booking IDs (bk_id) for the user
+//       const bookingIds = result.rows.map(booking => booking.bk_id);
+
+//       // Fetch the booking waste for the user's booking IDs
+//       const result2 = await pool.query(
+//         'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
+//         [bookingIds]
+//       );
+//       // Combine booking data and waste data into one response object
+//       res.status(200).json({
+//         booking: result.rows,
+//         wasteTypes: result2.rows
+
+//       });
+//     } else {
+//       res.status(404).json({ error: 'No bookings found' });
+//     }
+//   } catch (error) {
+//     console.error('Error fetching booking data:', error.message);
+//     res.status(500).json({ error: 'Database error' });
+//   }
+// });
 
 //fetch booking data
 app.post('/fetch_booking_details', authenticateToken, async (req, res) => {
@@ -2315,10 +2385,21 @@ app.post('/fetch_today_booking', authenticateToken, async (req, res) => {
   //const userId = req.user.id;  
 
   try {
+    // const result = await pool.query(
+    //   'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND bk_date::date <= CURRENT_DATE ORDER BY bk_date ASC',
+    //   ['Pending']
+    // );
     const result = await pool.query(
-      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND bk_date::date <= CURRENT_DATE ORDER BY bk_date ASC',
+      `SELECT *, bk_date::timestamp without time zone AS bk_date 
+       FROM booking 
+       WHERE bk_status = $1 
+         AND bk_date::date <= CURRENT_DATE 
+       ORDER BY 
+         bk_priority DESC, 
+         bk_date ASC`,
       ['Pending']
     );
+
     if (result.rows.length > 0) {
       // Extract all booking IDs (bk_id) for the user
       const bookingIds = result.rows.map(booking => booking.bk_id);
@@ -2348,7 +2429,7 @@ app.post('/fetch_upcoming_booking', authenticateToken, async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND bk_date::date > CURRENT_DATE ORDER BY bk_date ASC',
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND bk_date::date > CURRENT_DATE ORDER BY  bk_priority DESC, bk_date ASC',
       ['Pending']
     );
     if (result.rows.length > 0) {
@@ -2428,7 +2509,7 @@ app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
 
     // Fetch historical bookings
     const resultHistory = await pool.query(
-      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE (bk_status != $1 AND bk_status != $2 AND bk_status != $3) AND emp_id = $4 ORDER BY bk_date ASC',
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE (bk_status != $1 AND bk_status != $2 AND bk_status != $3) AND emp_id = $4 ORDER BY bk_date DESC',
       ['Pending', 'Ongoing', 'Cancelled', userId]
     );
 
