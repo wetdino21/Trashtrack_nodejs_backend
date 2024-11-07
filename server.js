@@ -1936,7 +1936,7 @@ app.post('/fetch_day_limit', authenticateToken, async (req, res) => {
                                           booking_limit.bl_max_day
                                       FROM 
                                           daily_counts
-                                      CROSS JOIN 
+                                      CROSS JOIN
                                           booking_limit
                                       WHERE 
                                           daily_counts.count_per_day >= booking_limit.bl_max_day
@@ -2060,6 +2060,36 @@ app.post('/booking', authenticateToken, async (req, res) => {
   } = req.body;
 
   try {
+    // check if date is not full
+    const bookLimit = await pool.query(`
+       WITH daily_counts AS (
+         SELECT 
+           DATE(bk_date) AS day,
+           COUNT(*) AS count_per_day
+         FROM 
+           booking
+         GROUP BY 
+           DATE(bk_date)
+       )
+       SELECT 
+         daily_counts.day,
+         daily_counts.count_per_day,
+         booking_limit.bl_max_day
+       FROM 
+         daily_counts
+       CROSS JOIN 
+         booking_limit
+       WHERE 
+         daily_counts.day = $1
+       AND 
+         daily_counts.count_per_day >= booking_limit.bl_max_day
+       LIMIT 1;`, [date]);
+
+    if (bookLimit.rows.length > 0) {
+      return res.status(429).json(); //fully booked date
+    }
+
+    //insert now
     const query = `
       INSERT INTO booking (bk_fullname, bk_contact, bk_province, bk_city, bk_brgy, bk_street, bk_postal, bk_latitude, bk_longitude, bk_date, cus_id)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -2255,6 +2285,40 @@ app.post('/booking_update', authenticateToken, async (req, res) => {
   } = req.body;
 
   try {
+    // check if date is not full
+    const bkdateDB = await pool.query(`SELECT bk_id from booking where bk_id = $1 AND date(bk_date) = $2`, [bookingId, date]);
+    if (bkdateDB.rows.length === 0) {
+      const bookLimit = await pool.query(`
+        WITH daily_counts AS (
+          SELECT 
+            DATE(bk_date) AS day,
+            COUNT(*) AS count_per_day
+          FROM 
+            booking
+          GROUP BY 
+            DATE(bk_date)
+        )
+        SELECT 
+          daily_counts.day,
+          daily_counts.count_per_day,
+          booking_limit.bl_max_day
+        FROM 
+          daily_counts
+        CROSS JOIN 
+          booking_limit
+        WHERE 
+          daily_counts.day = $1
+        AND 
+          daily_counts.count_per_day >= booking_limit.bl_max_day
+        LIMIT 1;`, [date]);
+
+      if (bookLimit.rows.length > 0) {
+        return res.status(429).json(); //fully booked date
+      }
+    }
+
+
+    //
     const result = await pool.query(
       'SELECT bk_status FROM booking WHERE bk_status != $1 AND bk_id = $2',
       ['Pending', bookingId]
@@ -2480,6 +2544,43 @@ app.post('/accept_booking', authenticateToken, async (req, res) => {
     }
   } catch (error) {
     console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//cancel booking
+app.post('/booking_return', authenticateToken, async (req, res) => {
+  const id = req.user.id;
+
+  const {
+    bookingId,
+  } = req.body;
+
+  try {
+    const result = await pool.query(
+      `UPDATE booking
+       SET 
+         bk_status = $1, 
+         bk_haul_lat = NULL, 
+         bk_haul_long = NULL, 
+         emp_id = NULL, 
+         bk_arrived = $2 
+       WHERE bk_id = $3`,
+      [
+        'Pending',
+        false,
+        bookingId
+      ]
+    );
+
+    if (result.rowCount > 0) {
+      res.status(200).json({ bookingId });
+    } else {
+      console.error('Booking return failed');
+      res.status(400).json({ error: 'Booking return failed' });
+    }
+  } catch (error) {
+    console.error('Error booking cancellation:', error.message);
     res.status(500).json({ error: 'Database error' });
   }
 });
