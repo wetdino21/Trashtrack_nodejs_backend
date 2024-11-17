@@ -1899,6 +1899,57 @@ app.post('/check_unpaid_bill', authenticateToken, async (req, res) => {
   }
 });
 
+//check verified customer
+app.post('/check_verified_customer', authenticateToken, async (req, res) => {
+  const userId = req.user.id;  // Assuming the user ID is stored in the token
+  try {
+    const result = await pool.query(
+      'SELECT cus_isverified from customer where cus_id = $1',
+      [userId]
+    );
+
+    if (result.rows.length > 0) {
+      if (result.rows[0].cus_isverified == true) {
+        return res.status(200).json();
+      }
+    }
+    return res.status(429).json();
+  } catch (error) {
+    console.error('Error fetching booking data:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// submit account verification
+app.post('/submit_account_verification', authenticateToken, async (req, res) => {
+  const id = req.user.id; // Get the user ID from the token
+  const { validID, selfie } = req.body;
+
+  try {
+    // Convert base64 string back to bytea
+    const imageID = validID ? Buffer.from(validID, 'base64') : null;
+    const imageSelfie = selfie ? Buffer.from(selfie, 'base64') : null;
+
+    const result = await pool.query(
+      `INSERT INTO VERIFIED_CUSTOMER (vc_valid_id, vc_selfie, cus_id)
+        VALUES($1, $2, $3)`,
+      [
+        imageID,
+        imageSelfie,
+        id
+      ]
+    );
+
+    if (result.rowCount > 0) {
+      return res.status(200).json();
+    }
+
+  } catch (error) {
+    console.error('Error updating user:', error.message); // Show debug print on server cmd
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // Fetch booking limit
 app.post('/fetch_book_limit', authenticateToken, async (req, res) => {
 
@@ -2788,7 +2839,7 @@ async function fetchTotalAmountDue(gb_id) {
       const Datetoday = new Date().setHours(0, 0, 0, 0); // Today's date at midnight
       const Date_today = new Date(Datetoday);
 
-      const taxRate = row.gb_tax / 100; 
+      const taxRate = row.gb_tax / 100;
       let amount_due = parseFloat(row.amount_due);
       const addFees = Number(row.gb_add_fees);
       const addNote = row.gb_note;
@@ -2797,7 +2848,7 @@ async function fetchTotalAmountDue(gb_id) {
         amount_due += addFees;
       }
       const vat = amount_due * taxRate;
-      amount_due += vat; 
+      amount_due += vat;
 
       // Calculate due dates for interest application
       const dateIssued = new Date(row.gb_date_issued).setHours(0, 0, 0, 0);
@@ -2811,8 +2862,8 @@ async function fetchTotalAmountDue(gb_id) {
 
       // Check if today is past the due date
       if (Date_today > dueDate) {
-       
-        let interestAppliedCount = 0; 
+
+        let interestAppliedCount = 0;
         let interestAmount = amount_due * (interest / 100);
         amount_due += interestAmount;
         interestAppliedCount += 1;
