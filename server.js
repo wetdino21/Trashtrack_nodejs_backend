@@ -1912,6 +1912,14 @@ app.post('/check_verified_customer', authenticateToken, async (req, res) => {
       if (result.rows[0].cus_isverified == true) {
         return res.status(200).json();
       }
+      const result2 = await pool.query(
+        'SELECT cus_id from verified_customer where cus_id = $1 AND vc_status = $2',
+        [userId, 'Pending']
+      );
+
+      if (result2.rows.length > 0) {
+        return res.status(201).json(); // still pending
+      }
     }
     return res.status(429).json();
   } catch (error) {
@@ -2209,8 +2217,8 @@ app.post('/fetch_booking', authenticateToken, async (req, res) => {
   try {
     // Fetch current bookings (Pending, Ongoing)
     const resultCurrent = await pool.query(
-      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE cus_id = $1 AND (bk_status = $2 OR bk_status = $3) ORDER BY bk_date ASC',
-      [userId, 'Pending', 'Ongoing']
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE cus_id = $1 AND (bk_status = $2 OR bk_status = $3 OR bk_status = $4) ORDER BY bk_date ASC',
+      [userId, 'Pending', 'Ongoing', 'Billed']
     );
 
     // Extract all current booking IDs (bk_id)
@@ -2227,8 +2235,8 @@ app.post('/fetch_booking', authenticateToken, async (req, res) => {
 
     // Fetch historical bookings (all other statuses)
     const resultHistory = await pool.query(
-      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE cus_id = $1 AND bk_status NOT IN ($2, $3) ORDER BY bk_date DESC',
-      [userId, 'Pending', 'Ongoing']
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE cus_id = $1 AND bk_status NOT IN ($2, $3, $4) ORDER BY bk_date DESC',
+      [userId, 'Pending', 'Ongoing', 'Billed']
     );
 
     // Extract all historical booking IDs (bk_id)
@@ -2256,38 +2264,6 @@ app.post('/fetch_booking', authenticateToken, async (req, res) => {
   }
 });
 
-// app.post('/fetch_booking', authenticateToken, async (req, res) => {
-//   const userId = req.user.id;  // Assuming the user ID is stored in the token
-//   try {
-//     const result = await pool.query(
-//       'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE cus_id = $1 ORDER BY bk_date ASC',
-//       [userId]
-//     );
-
-//     if (result.rows.length > 0) {
-//       // Extract all booking IDs (bk_id) for the user
-//       const bookingIds = result.rows.map(booking => booking.bk_id);
-
-//       // Fetch the booking waste for the user's booking IDs
-//       const result2 = await pool.query(
-//         'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
-//         [bookingIds]
-//       );
-//       // Combine booking data and waste data into one response object
-//       res.status(200).json({
-//         booking: result.rows,
-//         wasteTypes: result2.rows
-
-//       });
-//     } else {
-//       res.status(404).json({ error: 'No bookings found' });
-//     }
-//   } catch (error) {
-//     console.error('Error fetching booking data:', error.message);
-//     res.status(500).json({ error: 'Database error' });
-//   }
-// });
-
 //fetch booking data
 app.post('/fetch_booking_details', authenticateToken, async (req, res) => {
   const { bookID } = req.body;
@@ -2298,10 +2274,18 @@ app.post('/fetch_booking_details', authenticateToken, async (req, res) => {
     );
 
     if (result.rows.length > 0) {
+
+      // Convert bk_waste_scale_slip to Base64 if it exists
+      if (result.rows[0].bk_waste_scale_slip) {
+        result.rows[0].bk_waste_scale_slip = result.rows[0].bk_waste_scale_slip.toString('base64');
+      }
+
+      //waste lists
       const result2 = await pool.query(
         'SELECT * FROM booking_waste WHERE bk_id = $1 ORDER BY bw_name ASC',
         [bookID]
       );
+
       res.status(200).json({
         booking: result.rows,
         wasteTypes: result2.rows
@@ -2632,7 +2616,42 @@ app.post('/booking_return', authenticateToken, async (req, res) => {
       res.status(400).json({ error: 'Booking return failed' });
     }
   } catch (error) {
-    console.error('Error booking cancellation:', error.message);
+    console.error('Error Booking return:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//cancel booking
+app.post('/upload_scale_slip', authenticateToken, async (req, res) => {
+  const id = req.user.id;
+
+  const {
+    photoSlip,
+    bookingId
+  } = req.body;
+
+  try {
+    const imageSlip = photoSlip ? Buffer.from(photoSlip, 'base64') : null;
+
+    const result = await pool.query(
+      `UPDATE booking
+       SET 
+         bk_waste_scale_slip = $1
+       WHERE bk_id = $2`,
+      [
+        imageSlip,
+        bookingId
+      ]
+    );
+
+    if (result.rowCount > 0) {
+      res.status(200).json();
+    } else {
+      console.error('Upload Scale slip failed');
+      res.status(400).json();
+    }
+  } catch (error) {
+    console.error('Error Upload Scale slip:', error.message);
     res.status(500).json({ error: 'Database error' });
   }
 });
@@ -2644,8 +2663,8 @@ app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
   try {
     // Fetch current bookings
     const resultCurrent = await pool.query(
-      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND emp_id = $2 ORDER BY bk_date ASC',
-      ['Ongoing', userId]
+      'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE (bk_status = $1 OR bk_status = $2) AND emp_id = $3 ORDER BY bk_date ASC',
+      ['Ongoing', 'Billed', userId]
     );
 
     // Extract all current booking IDs (bk_id)
@@ -2663,7 +2682,7 @@ app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
     // Fetch historical bookings
     const resultHistory = await pool.query(
       'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE (bk_status != $1 AND bk_status != $2 AND bk_status != $3) AND emp_id = $4 ORDER BY bk_date DESC',
-      ['Pending', 'Ongoing', 'Cancelled', userId]
+      ['Pending', 'Ongoing', 'Billed', userId]
     );
 
     // Extract all historical booking IDs (bk_id)
@@ -2699,87 +2718,16 @@ app.post('/fetch_bill', authenticateToken, async (req, res) => {
   const cusId = req.user.id; // Assuming user ID is available after authentication
 
   try {
-    // Fetch bills associated with the specified bk_id for the authenticated customer
 
     const result = await pool.query(
       `SELECT gb.* FROM GENERATE_BILL gb
        JOIN BOOKING b ON gb.BK_ID = b.BK_ID
-       WHERE b.CUS_ID = $1 AND gb.gb_status = $2`,
-      [cusId, 'Unpaid']
+       WHERE b.CUS_ID = $1 AND gb.gb_status = $2 AND (b.bk_status != $3 AND b.bk_status != $4 AND b.bk_status != $5)`,
+      [cusId, 'Unpaid', 'Cancelled', 'Failed', 'Paid']
     );
-
-    // const result = await pool.query(
-    //   `SELECT gb.*, 
-    //           (SUM(bw.bw_total_price)) AS amount_due
-    //    FROM GENERATE_BILL gb
-    //    JOIN BOOKING b ON gb.BK_ID = b.BK_ID
-    //    JOIN BOOKING_WASTE bw ON bw.BK_ID = b.BK_ID
-    //    WHERE b.CUS_ID = $1 AND gb.gb_status = $2
-    //    GROUP BY gb.BK_ID, gb.GB_ID, gb.gb_tax, gb.gb_status
-    //    ORDER BY gb_date_due
-    //   `,
-    //   [cusId, 'Unpaid']
-    // );
 
     // Check if any bill data was found
     if (result.rows.length > 0) {
-
-      // const Datetoday = new Date().setHours(0, 0, 0, 0); // Today's date at midnight
-      // const Date_today = new Date(Datetoday);
-      // result.rows.forEach(row => {
-      //   const taxRate = row.gb_tax / 100; // Convert tax to decimal
-      //   let amount_due = parseFloat(row.amount_due);
-      //   //let amount_due = row.amount_due; // Amount due before VAT
-      //   const vat = amount_due * taxRate; // Calculate VAT
-      //   amount_due += vat; // Add VAT to amount due
-
-      //   // Calculate due dates for interest application
-      //   const dateIssued = new Date(row.gb_date_issued).setHours(0, 0, 0, 0);
-      //   const leadDays = row.gb_lead_days;
-      //   const dueDate = new Date(dateIssued);
-      //   dueDate.setDate(dueDate.getDate() + leadDays); // Calculate due date
-
-      //   const accrualPeriod = row.gb_accrual_period;
-      //   const suspendPeriod = row.gb_suspend_period;
-      //   const interest = row.gb_interest;
-
-      //   // Check if today is past the due date
-      //   if (Date_today > dueDate) {
-      //     console.log(`\nBill ID: ${row.gb_id}`);
-      //     console.log('Amount after VAT: ₱' + amount_due.toFixed(2));
-      //     console.log('Today is after the due date, interest will be applied.');
-
-      //     // Apply interest for the first time after the due date
-      //     let interestAppliedCount = 0;  // To count how many times interest is applied
-      //     let interestAmount = amount_due * (interest / 100);
-      //     amount_due += interestAmount; // Add interest
-      //     interestAppliedCount += 1;
-
-      //     console.log(`First interest applied: ₱${interestAmount.toFixed(2)}`);
-      //     console.log('New Amount Due after first interest:', amount_due.toFixed(2));
-
-      //     // Calculate accrual date and suspension date
-      //     let accrualDate = new Date(dueDate);
-      //     accrualDate.setDate(accrualDate.getDate() + accrualPeriod);
-      //     let suspendDate = new Date(dueDate);
-      //     suspendDate.setDate(suspendDate.getDate() + suspendPeriod);
-
-      //     // Continue applying interest until the suspension date
-      //     while (Date_today >= accrualDate && accrualDate <= suspendDate) {
-      //       interestAmount = amount_due * (interest / 100);
-      //       amount_due += interestAmount; // Add interest
-
-
-      //       console.log(`Accrued interest applied: ₱${interestAmount.toFixed(2)}`);
-      //       console.log('New Amount Due after accrued interest:', amount_due.toFixed(2));
-
-      //       // Move to the next accrual period
-      //       accrualDate.setDate(accrualDate.getDate() + accrualPeriod);
-      //     }
-      //   }
-
-      //   console.log(`Final Amount Due after interest for Bill ID ${row.gb_id}: ₱${amount_due.toFixed(2)}`);
-      // });
 
       res.json(result.rows); // Return the bills as a response
     } else {
@@ -3007,52 +2955,6 @@ app.post('/fetch_all_vehicles', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
-
-// app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
-//   const userId = req.user.id;
-
-//   try {
-//      //current
-//     const resultCurrent = await pool.query(
-//       'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND emp_id = $2 ORDER BY bk_date ASC',
-//       ['Ongoing', userId]
-//     );
-//     if (resultCurrent.rows.length > 0) {
-//       // Extract all booking IDs (bk_id) for the user
-//       const bookingCurrentIds = resultCurrent.rows.map(booking => booking.bk_id);
-
-//       // Fetch the booking waste for the user's booking IDs
-//       const resultCurrentWaste = await pool.query(
-//         'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
-//         [bookingCurrentIds]
-//       );
-
-//       //history
-//       const resultHistory = await pool.query(
-//         'SELECT *, bk_date::timestamp without time zone AS bk_date FROM booking WHERE bk_status = $1 AND emp_id = $2 ORDER BY bk_date ASC',
-//         ['Ongoing', userId]
-//       );
-//       if (resultHistory.rows.length > 0) {
-//         const bookingHistoryIds = resultCurrent.rows.map(booking => booking.bk_id);
-//         const resultHistoryWaste = await pool.query(
-//           'SELECT * FROM booking_waste WHERE bk_id = ANY($1::int[])',
-//           [bookingHistoryIds]
-//         );
-//       }
-//       // Combine booking data and waste data into one response object
-//       res.status(200).json({
-//         booking: resultCurrent.rows,
-//         wasteTypes: resultCurrentWaste.rows
-
-//       });
-//     } else {
-//       res.status(404).json({ error: 'No bookings found' });
-//     }
-//   } catch (error) {
-//     console.error('Error fetching booking data:', error.message);
-//     res.status(500).json({ error: 'Database error' });
-//   }
-// });
 
 // Fetch haul latitude longitude
 app.post('/fetch_all_latlong', authenticateToken, async (req, res) => {
@@ -3298,59 +3200,7 @@ app.post('/binding_google', authenticateToken, async (req, res) => {
 
 
 //////PAYMENT////////////////////////////////////////////////////////////////////////////
-// const PAYMONGO_SECRET_KEY = 'sk_test_SEQdG3bnMZroCCEVDm216X2Q'; // Replace with your actual key
-// const encodedSecretKey = Buffer.from(PAYMONGO_SECRET_KEY).toString('base64');
 
-// // Route to create a PayMongo payment link
-// app.post('/payment_link', authenticateToken, async (req, res) => {
-//   const { amount } = req.body;  // The amount in centavos
-//   const { email } = req.user;   // Email from the decoded token
-
-//   try {
-//     // Create the payment link using PayMongo's API
-//     const response = await axios.post(
-//       'https://api.paymongo.com/v1/links',
-//       {
-//         data: {
-//           attributes: {
-//             amount: amount,
-//             description: `Payment from ${email}`,
-//             checkout_url: null,
-//             payment_method_types: ['card', 'gcash'],
-//             currency: 'PHP',
-//           },
-//         },
-//       },
-//       {
-//         headers: {
-//           Authorization: `Basic ${encodedSecretKey}`,
-//           'Content-Type': 'application/json',
-//         },
-//       }
-//     );
-
-//     const paymentLink = response.data.data;
-
-//     // Check if the paymentLink contains the checkout URL
-//     const checkoutUrl = paymentLink.attributes.checkout_url;
-
-//     // If checkout URL exists, return it
-//     if (checkoutUrl) {
-//       res.json({
-//         checkoutUrl: checkoutUrl,
-//       });
-//     } else {
-//       throw new Error('Checkout URL not available');
-//     }
-//   } catch (error) {
-//     console.error('Error creating payment link:', error.message || error);
-//     res.status(500).json({ error: 'Failed to create payment link' });
-//   }
-// });
-
-
-
-//const PAYMONGO_SECRET_KEY = 'sk_test_B3AhBpzntGs1eYhNKBWo1hSw'; // Replace with your actual key
 const PAYMONGO_SECRET_KEY = process.env.PAYMONGO_SECRET;
 
 if (!PAYMONGO_SECRET_KEY) {
@@ -3362,7 +3212,7 @@ const encodedSecretKey = Buffer.from(PAYMONGO_SECRET_KEY).toString('base64');
 // Payment link session endpoint
 app.post('/payment_link_Session', authenticateToken, async (req, res) => {
   const { email } = req.user;
-  const { gb_id } = req.body; // The amount in centavos
+  const { gb_id, bk_id } = req.body;
 
   try {
 
@@ -3378,17 +3228,15 @@ app.post('/payment_link_Session', authenticateToken, async (req, res) => {
     if (result.rows.length > 0) {
       const user = result.rows[0];
       const name = `${user.cus_fname} ${user.cus_mname || ''} ${user.cus_lname}`.trim();
-      const phone = user.cus_contact;
+      const modifiedPhone = user.cus_contact;
+      const phone = modifiedPhone.substring(1);
 
       const response = await axios.post(
         'https://api.paymongo.com/v1/checkout_sessions',
         {
           data: {
             attributes: {
-              // amount: amount * 1000,
-              // currency: 'PHP', 
-              description: 'Billing Id: ' + gb_id,
-              //description: 'Payment for your transaction',
+              description: 'Booking Id: ' + bk_id + ', ' + 'Billing Id: ' + gb_id,
               billing: {
                 name,
                 email,
@@ -3418,7 +3266,7 @@ app.post('/payment_link_Session', authenticateToken, async (req, res) => {
               // success_url: 'https://trashtrack.com/payment-success',
               // cancel_url: 'https://trashtrack.com/payment-cancel',
               //success_url: 'http://192.168.254.187:3000',
-              metadata: { gb_id: gb_id }, //for generated bill from table db
+              metadata: { bk_id: bk_id, gb_id: gb_id }, //for generated bill from table db
             },
           },
         },
@@ -3447,54 +3295,17 @@ app.post('/payment_link_Session', authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message || 'Failed to create checkout session' });
   }
 });
-//////////////
-
-// // Payment status check endpoint
-// app.get('/payment_status/:sessionId', authenticateToken, async (req, res) => {
-//   const { sessionId } = req.params;
-
-//   try {
-//     const response = await axios.get(`https://api.paymongo.com/v1/checkout_sessions/${sessionId}`, {
-//       headers: {
-//         Authorization: `Basic ${encodedSecretKey}`,
-//         'Content-Type': 'application/json',
-//       },
-//     });
-
-//     const payments = response.data.data.attributes.payments;
-
-//     if (payments && payments.length > 0) {
-//       const isPaid = payments.some(payment => payment.attributes.status === 'paid');
-
-//       if (isPaid) {
-
-//         console.log("At least one payment is 'paid'");
-//         return res.json();
-//       } else {
-//         console.log("Failed");
-//       }
-
-//     } else {
-//       console.log('No payments found');
-//     }
-
-//   } catch (error) {
-//     console.error('Error checking payment status:', error.message);
-//     res.status(500).json({ error: 'Failed to check payment status' });
-//   }
-// });
 
 // paymongo will this endpoint (for status check)
 app.post('/webhooks/paymongo', async (req, res) => {
   const event = req.body; // Event payload from PayMongo
   //console.log('Received event:', JSON.stringify(event, null, 2)); // Log the entire event payload
 
-  // Access the event type correctly
   const eventType = event.data.attributes.type;
 
   if (!eventType) {
     console.log('Event type is undefined');
-    return res.sendStatus(400); // Respond with an error for unhandled types
+    return res.sendStatus(400);
   }
 
   switch (eventType) {
@@ -3502,21 +3313,13 @@ app.post('/webhooks/paymongo', async (req, res) => {
       const payments = event.data.attributes.data.attributes.payments;
       const checkoutId = event.data.attributes.data.id;
       const billId = event.data.attributes.data.attributes.metadata.gb_id;
+      const bookId = event.data.attributes.data.attributes.metadata.bk_id;
 
       if (payments && payments.length > 0) {
         const paymentId = payments[0].id; // Payment ID
         const amount = payments[0].attributes.amount / 100; // Amount in cents
         const method = payments[0].attributes.source.type;
         const pay_status = payments[0].attributes.status;
-        console.log(amount);
-        console.log(method);
-        console.log(pay_status);
-        console.log(paymentId);
-        console.log(checkoutId);
-        console.log(billId);
-        console.log('Payment was successful');
-        // console.log('Payment was successful:', event.data);
-        // Insert logic to save the session and amount to your database
 
         try {
           await pool.query(`
@@ -3525,26 +3328,20 @@ app.post('/webhooks/paymongo', async (req, res) => {
             [amount, pay_status, method, paymentId, checkoutId, billId]
           );
 
+          //update bill status
           const updateResult = await pool.query(`
             UPDATE GENERATE_BILL SET gb_status = $1 WHERE gb_id = $2`,
             ['Paid', billId]
           );
           if (updateResult.rowCount > 0) {
-            console.log('Payment details inserted successfully.');
-            //
-            // const response = await axios.get(`https://api.paymongo.com/v1/checkout_sessions/${checkoutId}`, {
-            //   headers: {
-            //     Authorization: `Basic ${encodedSecretKey}`,
-            //     'Content-Type': 'application/json',
-            //   },
-            // });
-            // if (response.status === 200) {
-            //   console.log('Payment details inserted successfully.');
-            //   console.log('Checkout session details:', response.data);
-            // } else {
-            //   console.log('Failed to fetch checkout session:', response.status);
-            // }
-            //
+            //update booking status
+            const updateResult2 = await pool.query(`
+            UPDATE BOOKING SET bk_status = $1 WHERE bk_id = $2`,
+              ['Paid', bookId]
+            );
+            if (updateResult2.rowCount > 0) {
+              console.log('Payment details inserted successfully.');
+            }
           }
 
         } catch (err) {
@@ -3557,14 +3354,12 @@ app.post('/webhooks/paymongo', async (req, res) => {
 
 
     case 'checkout_session.payment.failed':
-      // Handle failed payment
       console.log('Payment failed:', event.data);
-      // Insert logic for handling failed payment
       break;
 
     default:
       console.log('Unhandled event type:', eventType);
-      return res.sendStatus(400); // Respond with an error for unhandled types
+      return res.sendStatus(400);
   }
 
   res.sendStatus(200); // Respond to acknowledge receipt
@@ -3976,319 +3771,6 @@ app.post('/upload_pdf', authenticateToken, async (req, res) => {
 });
 
 
-
-// app.get('/generate-pdf', (req, res) => {
-//   const doc = new PDFDocument();
-
-//   // Set the filename for download
-//   res.setHeader('Content-Disposition', 'attachment; filename=generated_pdf.pdf');
-
-//   // Pipe the document to the response
-//   doc.pipe(res);
-
-//   // Image and Title (Header)
-//   const imagePath = path.join(__dirname, 'public/images/trashtrackicon.png'); // Ensure the image exists here
-//   const yHeaderPosition = 50; // Adjust this based on where you want the image and text to appear
-
-//   if (fs.existsSync(imagePath)) {
-//     // Draw the image on the left
-//     doc.image(imagePath, {
-//       fit: [50, 50], // Adjust the size of the image
-//       align: 'left',
-//       valign: 'center',
-//       x: 100, // X position for the image (left alignment)
-//       y: yHeaderPosition // Y position for both image and text
-//     });
-
-//     // Add title text beside the image
-//     doc.fontSize(20).text('TrashTrack', 160, yHeaderPosition + 15); // Adjust X (160) and Y (+15) to align text beside the image
-//   } else {
-//     doc.text('Image not found', 100, yHeaderPosition);
-//   }
-
-//   // Billing receipt message
-//   doc.moveDown();
-//   doc.fontSize(16).text('This is your billing receipt', { align: 'left' });
-
-//   // Example Table Data
-//   const tableData = [
-//     { column1: 'Item 1', column2: 'Description 1', column3: '$10' },
-//     { column1: 'Item 2', column2: 'Description 2', column3: '$15' },
-//     { column1: 'Item 3', column2: 'Description 3', column3: '$20' }
-//   ];
-
-//   // Define the start position for the table
-//   const tableStartY = yHeaderPosition + 100;
-//   let yPosition = tableStartY;
-
-//   // Draw table headers
-//   doc.fontSize(12).text('Item', 100, yPosition);
-//   doc.text('Description', 200, yPosition);
-//   doc.text('Price', 400, yPosition);
-
-//   // Draw a line under the headers
-//   doc.moveTo(100, yPosition + 15)
-//     .lineTo(500, yPosition + 15)
-//     .stroke();
-
-//   // Iterate over the table data
-//   tableData.forEach(row => {
-//     yPosition += 20;
-//     doc.text(row.column1, 100, yPosition);
-//     doc.text(row.column2, 200, yPosition);
-//     doc.text(row.column3, 400, yPosition);
-//   });
-
-//   // Draw a line under the table
-//   doc.moveTo(100, yPosition + 15)
-//     .lineTo(500, yPosition + 15)
-//     .stroke();
-
-//   // End the document
-//   doc.end();
-// });
-
-// // Route to create a PayMongo payment link
-// app.post('/payment_link', authenticateToken, async (req, res) => {
-//   const { amount } = req.body;  // The amount in centavos
-//   const { email } = req.user;   // Email from the decoded token
-
-//   try {
-//     // Create the payment link using PayMongo's API
-//     const response = await axios.post(
-//       'https://api.paymongo.com/v1/links',
-
-//       {
-//         data: {
-//           attributes: {
-//             amount: amount,
-//             description: `Payment from ${email}`,
-//             checkout_url: null,
-//             payment_method_types: ['card', 'gcash'],
-//             currency: 'PHP',
-//           },
-//         },
-//       },
-//       {
-//         headers: {
-//           Authorization: `Basic ${encodedSecretKey}`,
-//           'Content-Type': 'application/json',
-//         },
-//       }
-//     );
-
-//     const paymentLink = response.data.data;
-
-//     // Check if the paymentLink contains the checkout URL
-//     const checkoutUrl = paymentLink.attributes.checkout_url;
-//     console.log(paymentLink);
-//     // If checkout URL exists, return it
-//     if (checkoutUrl) {
-//       res.json({
-//         checkoutUrl: checkoutUrl,
-//       });
-//     } else {
-//       throw new Error('Checkout URL not available');
-//     }
-//   } catch (error) {
-//     console.error('Error creating payment link:', error.message || error);
-//     res.status(500).json({ error: 'Failed to create payment link' });
-//   }
-// });
-
-
-// /////// final checkout link
-// app.post('/payment_link_Session', authenticateToken, async (req, res) => {
-//   const { amount } = req.body;  // The amount in centavos
-//   const { email } = req.user;   // Email from the decoded token
-
-//   if (!amount || amount <= 0) {
-//     return res.status(400).json({ error: 'Invalid amount' });
-//   }
-
-//   try {
-//     const result = await pool.query('SELECT * FROM CUSTOMER WHERE cus_email = $1', [email]);
-
-//     if (result.rows.length > 0) {
-//       const user = result.rows[0];
-//       const name = `${user.cus_fname} ${user.cus_mname || ''} ${user.cus_lname}`.trim();
-//       const phone = user.cus_contact;
-
-//       const response = await axios.post(
-//         'https://api.paymongo.com/v1/checkout_sessions',
-//         {
-//           data: {
-//             attributes: {
-//               amount: amount * 100,
-//               currency: 'PHP',
-//               description: 'Payment for your transaction',
-//               billing: {
-//                 name,
-//                 email,
-//                 phone,
-//               },
-//               line_items: [
-//                 {
-//                   name: 'Food Waste',
-//                   amount: 100 * 100,
-//                   currency: 'PHP',
-//                   description: 'Payment for service',
-//                   quantity: 1,
-//                 },
-//               ],
-//               //payment_method_types: ['gcash', 'card', 'paymaya', 'grab_pay'],
-//               payment_method_types: [
-//                 'gcash',
-//                 'card',
-//                 'paymaya',
-//                 'grab_pay',
-//                 'qrph',
-//                 //'billease',
-//               ],
-//               success_url: 'https://trashtrack.com/success',
-//               cancel_url: 'https://trashtrack.com/cancel',
-//             },
-//           },
-//         },
-//         {
-//           headers: {
-//             Authorization: `Basic ${encodedSecretKey}`,
-//             'Content-Type': 'application/json',
-//           },
-//         }
-//       );
-
-//       const checkoutUrl = response.data.data.attributes.checkout_url;
-
-//       // const checkoutSession = response.data.data;
-//       // const sessionId = checkoutSession.id;  // Checkout session ID
-//       // const transactionId = checkoutSession.attributes.transaction_id; // If available
-
-//       const checkoutSession = response.data.data;
-//       const sessionId = checkoutSession.id;  // Checkout session ID
-//       // const paymentId = checkoutSession.payments.id; // Payment ID
-//       // const paymentStatus = checkoutSession.payments.attributes.status; // Payment status
-
-//       console.log(sessionId);
-//       // console.log(paymentId);
-//       // console.log(paymentStatus);
-//       console.log(checkoutUrl);
-//       if (checkoutUrl) {
-//         res.json({ checkoutUrl });
-//       } else {
-//         throw new Error('Checkout URL not available');
-//       }
-//     } else {
-//       res.status(404).json({ error: 'User not found' });
-//     }
-//   } catch (error) {
-//     console.error('Error creating checkout session:', error.message || error);
-//     res.status(500).json({ error: error.message || 'Failed to create checkout session' });
-//   }
-// });
-
-// // Route to create a PayMongo checkout session
-// app.post('/payment_link2', authenticateToken, async (req, res) => {
-//   const { amount } = req.body;  // The amount in centavos
-//   const { email } = req.user;   // Email from the decoded token
-
-//   console.log(amount, email);
-//   try {
-//     // Create the checkout session using PayMongo's API
-//     const response = await axios.post(
-//       'https://api.paymongo.com/v1/checkout_sessions',
-//       {
-//         data: {
-//           attributes: {
-//             amount: amount * 100, // Amount in centavos
-//             currency: 'PHP',
-//             description: `Payment for`,
-//             billing: {
-//               name: 'mike',
-//               email: email,
-//               phone: '092323223',
-//             },
-//             line_items: [
-//               {
-//                 name: 'mikesadsda',
-//                 amount: 100 * 100, // Price in centavos
-//                 currency: 'PHP',
-//                 description: 'mikeadsasdasdadas',
-//                 quantity: 1,
-//               },
-//             ],
-//             payment_method_types: ['gcash', 'card', 'paymaya', 'grab_pay'],
-//             // success_url: 'trashtrack://success', // Redirect to your app on success
-//             // cancel_url: 'trashtrack://cancel',   // Redirect to your app on cancel
-//             // success_url: 'https://example.com/success', // Redirect to your app on success
-//             // cancel_url: 'https://example.com/cancel',   // Redirect to your app on cancel
-//             success_url: 'https://trashtrack.com/success', // Redirect to your app on success
-//             cancel_url: 'https://trashtrack.com/cancel', // Redirect to your app on cancel
-
-//           },
-//         },
-//       },
-//       {
-//         headers: {
-//           Authorization: `Basic ${encodedSecretKey}`,
-//           'Content-Type': 'application/json',
-//         },
-//       }
-//     );
-
-//     const checkoutSession = response.data.data;
-
-//     // Check if the checkoutSession contains the checkout URL
-//     const checkoutUrl = checkoutSession.attributes.checkout_url;
-//     console.log(checkoutUrl);
-//     // If checkout URL exists, return it
-//     if (checkoutUrl) {
-//       res.json({
-//         checkoutUrl: checkoutUrl,
-//       });
-//     } else {
-//       throw new Error('Checkout URL not available');
-//     }
-//   } catch (error) {
-//     console.error('Error creating checkout session:', error.message || error);
-//     res.status(500).json({ error: 'Failed to create checkout session' });
-//   }
-// });
-
-
-
-
-
-
-///status
-// app.get('/payment_link_status/:paymentId', authenticateToken, async (req, res) => {
-//   const { paymentId } = req.params;
-
-//   console.log(2222222222222222222222222);
-//   try {
-//     const response = await axios.get(
-//       `https://api.paymongo.com/v1/payments/${paymentId}`,
-//       {
-//         headers: {
-//           Authorization: `Basic ${encodedSecretKey}`,
-//         },
-//       }
-//     );
-
-//     const paymentStatus = response.data.data.attributes.status;
-//     console.log(paymentStatus);
-//     res.json({ status: paymentStatus });
-
-//   } catch (error) {
-//     console.error('Error fetching payment status:', error.message || error);
-//     res.status(500).json({ error: 'Failed to fetch payment status' });
-//   }
-// });
-
-
-
-
-
 // Start the server
 // app.listen(port, () => {
 //   console.log(`Server running on http://localhost:${port}`);
@@ -4301,5 +3783,3 @@ app.post('/upload_pdf', authenticateToken, async (req, res) => {
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on ${networkLink}`);
 });
-
-//http://192.168.119.156
