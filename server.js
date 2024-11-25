@@ -111,38 +111,6 @@ const authenticateToken = (req, res, next) => {
 };
 
 
-// //websocket
-// wss.on('connection', (ws) => {
-//   console.log('Client connected');
-
-//   // Handle incoming messages from the client
-//   ws.on('message', (message) => {
-//     const parsedMessage = JSON.parse(message);
-//     switch (parsedMessage.type) {
-//       case 'chat':
-//         console.log('Received chat message:', parsedMessage.content);
-//         // Send a response to the client
-//         ws.send(JSON.stringify({ type: 'chat', content: 'Chat message received' }));
-//         break;
-//       case 'notification':
-//         console.log('Received notification message:', parsedMessage.content);
-//         ws.send(JSON.stringify({ type: 'notification', content: 'Notification received' }));
-//         break;
-//       case 'update':
-//         console.log('Received update message:', parsedMessage.content);
-//         ws.send(JSON.stringify({ type: 'update', content: 'Update received' }));
-//         break;
-//       default:
-//         ws.send(JSON.stringify({ type: 'error', content: 'Unknown message type' }));
-//     }
-//   });
-
-//   // Handle client disconnection
-//   ws.on('close', () => {
-//     console.log('Client disconnected');
-//   });
-// });
-
 // Listen for PostgreSQL notifications
 pool.connect((err, client, done) => {
   if (err) throw err;
@@ -1199,11 +1167,18 @@ app.post('/onOpenApp', authenticateToken, async (req, res) => {
       [email]
     );
     if (checkCustomerEmail.rowCount > 0) {
-      const customer = checkCustomerEmail.rows[0];
-      if (customer.cus_status == 'Active') {
+      const status = checkCustomerEmail.rows[0].cus_status;
+      if (status == 'Active') {
         return res.status(200).json({ message: 'User is a customer' });
       }
+      else if (status == 'Deactivated') {
+        return res.status(202).json();
+      }
+      else if (status == 'Suspended') {
+        return res.status(203).json();
+      }
     }
+
 
     //check where user is from table
     const checkEmployeeEmail = await pool.query(
@@ -1216,9 +1191,15 @@ app.post('/onOpenApp', authenticateToken, async (req, res) => {
     );
 
     if (checkEmployeeEmail.rowCount > 0) {
-      const employee = checkEmployeeEmail.rows[0];
-      if (employee.emp_status == 'Active') {
-        return res.status(201).json({ message: 'User is a employee' });
+      const empstatus = checkEmployeeEmail.rows[0].emp_status;
+      if (empstatus == 'Active') {
+        return res.status(201).json({ message: 'User is a hauler' });
+      }
+      else if (empstatus == 'Deactivated') {
+        return res.status(202).json();
+      }
+      else if (empstatus == 'Suspended') {
+        return res.status(203).json();
       }
     }
   } catch (error) {
@@ -1617,8 +1598,8 @@ app.post('/arrival_notif', authenticateToken, async (req, res) => {
     //`Please be prepared for waste collection at your designated spot. Ensure that all waste for collection is accessible and ready for pickup.\n\n`;
 
     const notificationResult = await pool.query(
-      'INSERT INTO notification (notif_message, emp_id, cus_id, bk_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [message, id, booking.cus_id, bk_id]
+      'INSERT INTO notification (notif_message, notif_type, emp_id, cus_id, bk_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [message, 'truck arrival', id, booking.cus_id, bk_id]
     );
     if (notificationResult.rows.length > 0) {
       const updateBook = await pool.query(`UPDATE BOOKING SET BK_ARRIVED = $1 WHERE BK_ID = $2`, [true, bk_id]);
@@ -1715,7 +1696,7 @@ app.post('/total_haul_waste_collected', authenticateToken, async (req, res) => {
 
 ///////////CUSTOMER DATA ////////////////////////////////////////////////////////
 //FETCH ALL DATA 
-app.post('/fetch_data', authenticateToken, async (req, res) => {
+app.post('/fetch_user_data', authenticateToken, async (req, res) => {
   const email = req.user.email;
 
   let userType = 'customer'; //for identity
@@ -1813,9 +1794,9 @@ app.post('/fetch_profile', authenticateToken, async (req, res) => {
 
 //notification
 app.post('/customer/fetch_notifications', authenticateToken, async (req, res) => {
-  const userId = req.user.id;  // Assuming the user ID is stored in the token
+  const userId = req.user.id;
   try {
-    const result = await pool.query('SELECT * FROM notification WHERE cus_id = $1 ORDER BY notif_created_at DESC', [userId]);
+    const result = await pool.query('SELECT * FROM notification WHERE cus_id = $1 AND notif_status = $2 ORDER BY notif_created_at DESC', [userId, 'Active']);
 
     if (result.rows.length > 0) {
       res.json(result.rows);
@@ -1824,6 +1805,29 @@ app.post('/customer/fetch_notifications', authenticateToken, async (req, res) =>
     }
   } catch (error) {
     console.error('Error fetching notifications:', error.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//delete notification
+app.post('/delete_notification', authenticateToken, async (req, res) => {
+  const { notif_id } = req.body;
+
+  try {
+    const result = await pool.query(
+      `UPDATE NOTIFICATION SET notif_status = $1 WHERE notif_id = $2`,
+      [
+        'Deleted',
+        notif_id
+      ]
+    );
+
+    if (result.rowCount > 0) {
+      return res.status(200).json();
+    }
+
+  } catch (error) {
+    console.error('Error deleting notification:', error.message); // Show debug print on server cmd
     res.status(500).json({ error: 'Database error' });
   }
 });
@@ -1841,8 +1845,14 @@ app.get('/waste_category', async (req, res) => {
 
 // Check if booking limit is reached
 app.post('/check_book_limit', authenticateToken, async (req, res) => {
-  const userId = req.user.id;  // Assuming the user ID is stored in the token
+  const userId = req.user.id;
   try {
+    //check if suspended
+    const isSuspened = await pool.query(`SELECT cus_status from customer where cus_id = $1`, [userId]);
+    if (isSuspened.rows[0].cus_status == 'Suspended') {
+      return res.status(423).json();
+    }
+
     // Fetch booking limit
     const bookLimit = await pool.query(`SELECT BL_MAX_COUNT, BL_STOP FROM BOOKING_LIMIT LIMIT 1`);
 
@@ -1879,7 +1889,7 @@ app.post('/check_book_limit', authenticateToken, async (req, res) => {
 
 //check unpaid bill
 app.post('/check_unpaid_bill', authenticateToken, async (req, res) => {
-  const userId = req.user.id;  // Assuming the user ID is stored in the token
+  const userId = req.user.id;
   try {
     const result = await pool.query(
       'SELECT gb.gb_id FROM GENERATE_BILL gb JOIN BOOKING b ON gb.bk_id = b.bk_id WHERE gb.gb_status = $1  AND b.cus_id = $2',
@@ -1901,7 +1911,7 @@ app.post('/check_unpaid_bill', authenticateToken, async (req, res) => {
 
 //check verified customer
 app.post('/check_verified_customer', authenticateToken, async (req, res) => {
-  const userId = req.user.id;  // Assuming the user ID is stored in the token
+  const userId = req.user.id;
   try {
     const result = await pool.query(
       'SELECT cus_isverified from customer where cus_id = $1',
@@ -1913,12 +1923,16 @@ app.post('/check_verified_customer', authenticateToken, async (req, res) => {
         return res.status(200).json();
       }
       const result2 = await pool.query(
-        'SELECT cus_id from verified_customer where cus_id = $1 AND vc_status = $2',
-        [userId, 'Pending']
+        'SELECT vc_status from verified_customer where cus_id = $1',
+        [userId]
       );
 
       if (result2.rows.length > 0) {
-        return res.status(201).json(); // still pending
+        const status = result2.rows[0].vc_status;
+        if (status == 'Pending')
+          return res.status(201).json();
+        if (status == 'Rejected')
+          return res.status(202).json();
       }
     }
     return res.status(429).json();
@@ -1953,7 +1967,59 @@ app.post('/submit_account_verification', authenticateToken, async (req, res) => 
     }
 
   } catch (error) {
-    console.error('Error updating user:', error.message); // Show debug print on server cmd
+    console.error('Error submitting account verification:', error.message); // Show debug print on server cmd
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// update account verification
+app.post('/update_account_verification', authenticateToken, async (req, res) => {
+  const id = req.user.id; // Get the user ID from the token
+  const { validID, selfie } = req.body;
+
+  try {
+    // Convert base64 string back to bytea
+    const imageID = validID ? Buffer.from(validID, 'base64') : null;
+    const imageSelfie = selfie ? Buffer.from(selfie, 'base64') : null;
+
+    const result = await pool.query(
+      `UPDATE VERIFIED_CUSTOMER SET vc_valid_id = $1, vc_selfie = $2, vc_status = $3 WHERE cus_id = $4`,
+      [
+        imageID,
+        imageSelfie,
+        'Pending',
+        id
+      ]
+    );
+
+    if (result.rowCount > 0) {
+      return res.status(200).json();
+    }
+
+  } catch (error) {
+    console.error('Error updating account verification:', error.message); // Show debug print on server cmd
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+//check unpaid bill
+app.post('/fetch_account_verification', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const result = await pool.query(
+      'SELECT * from verified_customer where cus_id = $1',
+      [userId]
+    );
+
+    if (result.rows.length > 0) {
+      result.rows[0].vc_valid_id = result.rows[0].vc_valid_id.toString('base64');
+      result.rows[0].vc_selfie = result.rows[0].vc_selfie.toString('base64');
+      return res.status(200).json(result.rows[0]);
+    }
+    return res.status(404).json();
+
+  } catch (error) {
+    console.error('Error fetching account verification data:', error.message);
     res.status(500).json({ error: 'Database error' });
   }
 });
@@ -2212,7 +2278,7 @@ app.post('/booking', authenticateToken, async (req, res) => {
 
 //fetch booking data
 app.post('/fetch_booking', authenticateToken, async (req, res) => {
-  const userId = req.user.id; // Assuming the user ID is stored in the token
+  const userId = req.user.id;
 
   try {
     // Fetch current bookings (Pending, Ongoing)
@@ -2715,7 +2781,7 @@ app.post('/fetch_hauler_pickup', authenticateToken, async (req, res) => {
 
 // Fetch all bill
 app.post('/fetch_bill', authenticateToken, async (req, res) => {
-  const cusId = req.user.id; // Assuming user ID is available after authentication
+  const cusId = req.user.id;
 
   try {
 
@@ -3009,7 +3075,7 @@ app.post('/update_haul_latlong', authenticateToken, async (req, res) => {
 app.post('/binding_trashtrack', authenticateToken, async (req, res) => {
   const id = req.user.id; // Get the user ID from the token
   const email = req.user.email;
-  const { password } = req.body; // Assuming the password is sent in the request body
+  const { password } = req.body;
 
   // Update employee password and auth method
   const hashedPassword = hashPassword(password);
@@ -3130,7 +3196,7 @@ app.post('/change_password', authenticateToken, async (req, res) => {
 app.post('/binding_google', authenticateToken, async (req, res) => {
   const id = req.user.id; // Get the user ID from the token
   const emailToken = req.user.email;
-  const { email } = req.body; // Assuming the email is sent in the request body
+  const { email } = req.body;
 
   try {
     // Check if the email belongs to an employee or a customer
