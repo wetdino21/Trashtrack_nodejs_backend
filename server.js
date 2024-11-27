@@ -1983,7 +1983,7 @@ app.post('/update_account_verification', authenticateToken, async (req, res) => 
     const imageSelfie = selfie ? Buffer.from(selfie, 'base64') : null;
 
     const result = await pool.query(
-      `UPDATE VERIFIED_CUSTOMER SET vc_valid_id = $1, vc_selfie = $2, vc_status = $3 WHERE cus_id = $4`,
+      `UPDATE VERIFIED_CUSTOMER SET vc_valid_id = $1, vc_selfie = $2, vc_status = $3 , vc_attempt = vc_attempt + 1 WHERE cus_id = $4`,
       [
         imageID,
         imageSelfie,
