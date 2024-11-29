@@ -2864,49 +2864,14 @@ async function fetchTotalAmountDue(gb_id) {
       const vat = amount_due * taxRate;
       amount_due += vat;
 
-      // Calculate due dates for interest application
-      const dateIssued = new Date(row.gb_date_issued).setHours(0, 0, 0, 0);
-      const leadDays = row.gb_lead_days;
-      const dueDate = new Date(dateIssued);
-      dueDate.setDate(dueDate.getDate() + leadDays);
-
-      const accrualPeriod = row.gb_accrual_period;
-      const suspendPeriod = row.gb_suspend_period;
-      const interest = row.gb_interest;
-
-      // Check if today is past the due date
-      if (Date_today > dueDate) {
-
-        let interestAppliedCount = 0;
-        let interestAmount = amount_due * (interest / 100);
-        amount_due += interestAmount;
-        interestAppliedCount += 1;
-
-        // Calculate accrual date and suspension date
-        let accrualDate = new Date(dueDate);
-        accrualDate.setDate(accrualDate.getDate() + accrualPeriod);
-        let suspendDate = new Date(dueDate);
-        suspendDate.setDate(suspendDate.getDate() + suspendPeriod);
-
-        // Continue applying interest until the suspension date
-        while (Date_today >= accrualDate && accrualDate <= suspendDate) {
-          interestAmount = amount_due * (interest / 100);
-          amount_due += interestAmount; // Add interest
-
-          // Move to the next accrual period
-          accrualDate.setDate(accrualDate.getDate() + accrualPeriod);
-        }
-      }
-
       console.log(`Calculation Final Amount Due after interest for Bill ID ${row.gb_id}: ₱${amount_due.toFixed(2)}`);
       return parseFloat(amount_due.toFixed(2)); // Return the final amount due
     } else {
       console.error('No bills found for the specified booking ID');
-      //throw new Error('No bills found for the specified booking ID');
     }
   } catch (error) {
     console.error('Error fetching total amount due:', error.message);
-    throw new Error('Database error');
+    //throw new Error('Database error');
   }
 }
 
@@ -3515,11 +3480,6 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
         bw.bw_total_price,
         gb.gb_date_issued,
         gb.gb_date_due,
-        gb.gb_lead_days,
-        gb.gb_date_issued,
-        gb.gb_accrual_period,
-        gb.gb_suspend_period,
-        gb.gb_interest,
         gb.gb_tax,
         gb.gb_add_fees,
         gb.gb_note 
@@ -3545,24 +3505,22 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     // Display bk_id
     const bkId = tableData[0].bk_id;
-    //doc.font('Helvetica').fontSize(9).text(`Booking# ${bkId}`, 50, billDetailsYPosition + 20);
 
     // Add Terms section (Left aligned)
     let termsYPosition = billDetailsYPosition + 50;
-    //doc.font('Helvetica-Bold').fontSize(12).text('TERMS:', 50, termsYPosition, { align: 'left' });
     doc.font('Helvetica').fontSize(8);
 
-    const dateIssued = tableData[0].gb_date_issued;
-    const leadDays = tableData[0].gb_lead_days;
-    const accrualPeriod = tableData[0].gb_accrual_period;
-    const suspendPeriod = tableData[0].gb_suspend_period;
-    const interest = tableData[0].gb_interest;
+    // const dateIssued = tableData[0].gb_date_issued;
+    // const accrualPeriod = tableData[0].gb_accrual_period;
+    // const suspendPeriod = tableData[0].gb_suspend_period;
+    // const interest = tableData[0].gb_interest;
     const addNote = tableData[0].gb_note;
     const addFees = tableData[0].gb_add_fees;
 
-    // const termsText = `The bill shall be due for payment and collection (${leadDays}) days after issuance. Failure by the customer to make payment without valid and justifiable reason will result in a late payment charge of (${interest}% interest) per ${accrualPeriod}days applied to any outstanding balance until ${suspendPeriod}days. Additionally, TrashTrack reserves the right to stop collecting waste materials from the customer's premises if payment is not made, preventing further processing and disposal services.`;
-    // termsYPosition += 20;
-    // doc.text(termsText, 50, termsYPosition, { align: 'left' });
+    const termsText = `The bill shall be due for payment and collection on the day of issuance. Failure by the customer to make payment without valid and justifiable reason may result in the suspension of waste collection services. Additionally, TrashTrack reserves the right to withhold further processing and disposal services for the customer's premises to ensure compliance with payment obligations.`;
+    //const termsText = `The bill shall be due for payment and collection (${leadDays}) days after issuance. Failure by the customer to make payment without valid and justifiable reason will result in a late payment charge of (${interest}% interest) per ${accrualPeriod}days applied to any outstanding balance until ${suspendPeriod}days. Additionally, TrashTrack reserves the right to stop collecting waste materials from the customer's premises if payment is not made, preventing further processing and disposal services.`;
+    termsYPosition += 20;
+    doc.text(termsText, 50, termsYPosition, { align: 'left' });
 
     // Move down for IDs and table
     let tableYPosition = termsYPosition + 50;
@@ -3652,93 +3610,93 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
 
     tableYPosition += 10;
 
-    //added interest
-    let dueDate = addDaysToDate(dateIssued, leadDays);
-    let accrualDate = addDaysToDate(dueDate, accrualPeriod);
-    let suspendDate = addDaysToDate(dueDate, suspendPeriod);
+    // //added interest
+    // let dueDate = addDaysToDate(dateIssued, leadDays);
+    // let accrualDate = addDaysToDate(dueDate, accrualPeriod);
+    // let suspendDate = addDaysToDate(dueDate, suspendPeriod);
 
-    // Convert dates to yyyy-mm-dd for comparison
-    let Date_bill = new Date().setHours(0, 0, 0, 0); // Today's date at midnight
-    let Date_due = new Date(dueDate).setHours(0, 0, 0, 0);
-    let Date_accrual = new Date(accrualDate).setHours(0, 0, 0, 0);
-    let Date_suspend = new Date(suspendDate).setHours(0, 0, 0, 0);
+    // // Convert dates to yyyy-mm-dd for comparison
+    // let Date_bill = new Date().setHours(0, 0, 0, 0); // Today's date at midnight
+    // let Date_due = new Date(dueDate).setHours(0, 0, 0, 0);
+    // let Date_accrual = new Date(accrualDate).setHours(0, 0, 0, 0);
+    // let Date_suspend = new Date(suspendDate).setHours(0, 0, 0, 0);
 
-    const paidResult = await pool.query(
-      `SELECT p_date_paid FROM PAYMENT WHERE gb_id = $1 AND p_status = $2`, [billId, 'paid']
-    );
+    // const paidResult = await pool.query(
+    //   `SELECT p_date_paid FROM PAYMENT WHERE gb_id = $1 AND p_status = $2`, [billId, 'paid']
+    // );
 
-    if (paidResult.rows.length > 0) {
-      const date = paidResult.rows[0].p_date_paid;
-      Date_bill = new Date(date).setHours(0, 0, 0, 0);
-      console.log('Already Paid generating bill PDF');
-    }
+    // if (paidResult.rows.length > 0) {
+    //   const date = paidResult.rows[0].p_date_paid;
+    //   Date_bill = new Date(date).setHours(0, 0, 0, 0);
+    //   console.log('Already Paid generating bill PDF');
+    // }
 
-    // If today's date is past the due date, calculate the additional interest
-    if (Date_bill > Date_due) {
+    // // If today's date is past the due date, calculate the additional interest
+    // if (Date_bill > Date_due) {
 
-      let interestAppliedCount = 0;  // To count how many times interest is applied
+    //   let interestAppliedCount = 0;  // To count how many times interest is applied
 
-      tableYPosition += 20;
-      // Table headers
-      doc.font('Helvetica').fontSize(9)
-        .text('Date Interest Added', col2X, tableYPosition)
-        .text('Description', col4X, tableYPosition)
-        .text('Amount', col5X, tableYPosition);
+    //   tableYPosition += 20;
+    //   // Table headers
+    //   doc.font('Helvetica').fontSize(9)
+    //     .text('Date Interest Added', col2X, tableYPosition)
+    //     .text('Description', col4X, tableYPosition)
+    //     .text('Amount', col5X, tableYPosition);
 
 
-      // Draw the bottom line for the table
-      doc.moveTo(col2X, tableYPosition + 15)
-        .lineTo(550, tableYPosition + 15)
-        .stroke();
+    //   // Draw the bottom line for the table
+    //   doc.moveTo(col2X, tableYPosition + 15)
+    //     .lineTo(550, tableYPosition + 15)
+    //     .stroke();
 
-      tableYPosition += 20;
+    //   tableYPosition += 20;
 
-      // First interest application after due date
-      let interestAmount = amountDue * (interest / 100);
-      amountDue += interestAmount;
-      interestAppliedCount += 1;
+    //   // First interest application after due date
+    //   let interestAmount = amountDue * (interest / 100);
+    //   amountDue += interestAmount;
+    //   interestAppliedCount += 1;
 
-      // Display the first interest row in the table
-      const firstdate = addDaysToDate(Date_due, 1);
-      doc.font(roboto).fontSize(9)
-        .text(new Date(firstdate).toDateString(), col2X, tableYPosition)
-        .text(`Overdue Interest (${interest}%):`, col4X, tableYPosition)
-        .text('₱ ' + formatNumComma(interestAmount), col5X, tableYPosition);
-      tableYPosition += 20;
+    //   // Display the first interest row in the table
+    //   const firstdate = addDaysToDate(Date_due, 1);
+    //   doc.font(roboto).fontSize(9)
+    //     .text(new Date(firstdate).toDateString(), col2X, tableYPosition)
+    //     .text(`Overdue Interest (${interest}%):`, col4X, tableYPosition)
+    //     .text('₱ ' + formatNumComma(interestAmount), col5X, tableYPosition);
+    //   tableYPosition += 20;
 
-      // Continue applying interest in accrual periods until either today's date is past the suspension date or we reach the accrual date
-      while (Date_bill >= Date_accrual && Date_accrual <= Date_suspend) {
+    //   // Continue applying interest in accrual periods until either today's date is past the suspension date or we reach the accrual date
+    //   while (Date_bill >= Date_accrual && Date_accrual <= Date_suspend) {
 
-        interestAmount = amountDue * (interest / 100);
-        amountDue += interestAmount;
-        interestAppliedCount += 1;
+    //     interestAmount = amountDue * (interest / 100);
+    //     amountDue += interestAmount;
+    //     interestAppliedCount += 1;
 
-        doc.text(new Date(Date_accrual).toDateString(), col2X, tableYPosition)
-          .text(`Accrued Interest (${interest}%):`, col4X, tableYPosition)
-          .text('₱ ' + formatNumComma(interestAmount), col5X, tableYPosition);
-        tableYPosition += 20;
+    //     doc.text(new Date(Date_accrual).toDateString(), col2X, tableYPosition)
+    //       .text(`Accrued Interest (${interest}%):`, col4X, tableYPosition)
+    //       .text('₱ ' + formatNumComma(interestAmount), col5X, tableYPosition);
+    //     tableYPosition += 20;
 
-        Date_accrual = new Date(addDaysToDate(Date_accrual, accrualPeriod)).setHours(0, 0, 0, 0);
-      }
+    //     Date_accrual = new Date(addDaysToDate(Date_accrual, accrualPeriod)).setHours(0, 0, 0, 0);
+    //   }
 
-      // Draw the bottom line for the table
-      doc.moveTo(col2X, tableYPosition)
-        .lineTo(550, tableYPosition)
-        .stroke();
+    //   // Draw the bottom line for the table
+    //   doc.moveTo(col2X, tableYPosition)
+    //     .lineTo(550, tableYPosition)
+    //     .stroke();
 
-      tableYPosition += 10;
-      // Display interest summary if interest was applied
-      if (interestAppliedCount > 0) {
-        doc.text(`Interest Applied: ${interestAppliedCount} time/s`, col4X, tableYPosition);
-        tableYPosition += 20;
-      }
+    //   tableYPosition += 10;
+    //   // Display interest summary if interest was applied
+    //   if (interestAppliedCount > 0) {
+    //     doc.text(`Interest Applied: ${interestAppliedCount} time/s`, col4X, tableYPosition);
+    //     tableYPosition += 20;
+    //   }
 
-      console.log('\nGenerated: Final Amount Due after interest:', amountDue.toFixed(2));
+    //   console.log('\nGenerated: Final Amount Due after interest:', amountDue.toFixed(2));
 
-      // Display the final total amount with interest in the table
-      doc.font(robotoBold).fontSize(11).text('Total Amount Due :', col4X, tableYPosition)
-        .text('₱ ' + formatNumComma(amountDue), col5X, tableYPosition);
-    }
+    //   // Display the final total amount with interest in the table
+    //   doc.font(robotoBold).fontSize(11).text('Total Amount Due :', col4X, tableYPosition)
+    //     .text('₱ ' + formatNumComma(amountDue), col5X, tableYPosition);
+    // }
 
     //for payment option
     tableYPosition += 50;
@@ -3751,9 +3709,11 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
       .text('   - Pay through the TrashTrack app with PayMongo.')
       .text('\n')
       .fontSize(10).font(robotoBold)
-      .text('In-Person Payment (Walk-In):')
+      .text('In-Person Payment (Cash):')
+      //.text('In-Person Payment (Walk-In):')
       .font(roboto).fontSize(9)
-      .text('   - Cash payments are accepted at our location. Please refer to the top right of this page.');
+      .text('   - Cash payments are accepted after the service. Please hand the payment directly to the hauler upon completion of the service.');
+      //.text('   - Cash payments are accepted at our location. Please refer to the top right of this page.');
 
 
     //
