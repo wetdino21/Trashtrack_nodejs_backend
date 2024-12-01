@@ -1963,6 +1963,13 @@ app.post('/submit_account_verification', authenticateToken, async (req, res) => 
     );
 
     if (result.rowCount > 0) {
+      const notificationResult = await pool.query(
+        'INSERT INTO notification (notif_message, notif_type, cus_id) VALUES ($1, $2, $3) RETURNING *',
+        ['Customer is requesting for verification', 'request verification', id]
+      );
+      if (notificationResult.rows.length === 0) {
+        console.log('Failed to send verification notification');
+      }
       return res.status(200).json();
     }
 
@@ -1993,6 +2000,13 @@ app.post('/update_account_verification', authenticateToken, async (req, res) => 
     );
 
     if (result.rowCount > 0) {
+      const notificationResult = await pool.query(
+        'INSERT INTO notification (notif_message, notif_type, cus_id) VALUES ($1, $2, $3) RETURNING *',
+        ['Customer is requesting for verification', 'request verification', id]
+      );
+      if (notificationResult.rows.length === 0) {
+        console.log('Failed to send verification notification');
+      }
       return res.status(200).json();
     }
 
@@ -2650,7 +2664,7 @@ app.post('/accept_booking', authenticateToken, async (req, res) => {
   }
 });
 
-//cancel booking
+//return booking
 app.post('/booking_return', authenticateToken, async (req, res) => {
   const id = req.user.id;
 
@@ -2687,7 +2701,7 @@ app.post('/booking_return', authenticateToken, async (req, res) => {
   }
 });
 
-//cancel booking
+//upload waste weigh
 app.post('/upload_scale_slip', authenticateToken, async (req, res) => {
   const id = req.user.id;
 
@@ -2711,6 +2725,16 @@ app.post('/upload_scale_slip', authenticateToken, async (req, res) => {
     );
 
     if (result.rowCount > 0) {
+      const fetchCus = await pool.query(`SELECT cus_id FROM BOOKING WHERE BK_ID = $1`, [bookingId]);
+      const cus_id = fetchCus.rows[0].cus_id;
+      const message = `Waste Scale Slip for Booking# ${bookingId} is now available`;
+      const notificationResult = await pool.query(
+        'INSERT INTO notification (notif_message, notif_type, emp_id, bk_id, cus_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+        [message, 'slip', id, bookingId, cus_id]
+      );
+      if (notificationResult.rows.length === 0) {
+        console.log('Failed to send slip notification');
+      }
       res.status(200).json();
     } else {
       console.error('Upload Scale slip failed');
@@ -3371,6 +3395,17 @@ app.post('/webhooks/paymongo', async (req, res) => {
               ['Paid', bookId]
             );
             if (updateResult2.rowCount > 0) {
+              //insert notif
+              const fetchCus = await pool.query(`SELECT cus_id FROM BOOKING WHERE bk_id = $1`, [bookId]);
+              const cus_id = fetchCus.rows[0].cus_id;
+              const message = `Bill# ${billId} has been successfully paid through ${method}`;
+              const notificationResult = await pool.query(
+                'INSERT INTO notification (notif_message, notif_type, bk_id, cus_id, gb_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+                [message, 'payment', bookId, cus_id, billId]
+              );
+              if (notificationResult.rows.length === 0) {
+                console.log('Failed to send payment notification');
+              }
               console.log('Payment details inserted successfully.');
             }
           }
@@ -3713,7 +3748,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
       //.text('In-Person Payment (Walk-In):')
       .font(roboto).fontSize(9)
       .text('   - Cash payments are accepted after the service. Please hand the payment directly to the hauler upon completion of the service.');
-      //.text('   - Cash payments are accepted at our location. Please refer to the top right of this page.');
+    //.text('   - Cash payments are accepted at our location. Please refer to the top right of this page.');
 
 
     //
