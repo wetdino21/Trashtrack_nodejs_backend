@@ -757,7 +757,7 @@ app.post('/email_check_forgotpass', async (req, res) => {
 
 // 1. CREATE ACC (GOOGLE REGISTER)
 app.post('/signup_google', async (req, res) => {
-  const { fname, mname, lname, email, photo, contact, province, city, brgy, street, postal } = req.body;
+  const { fname, mname, lname, email, photo, contact, province, city, brgy, street, postal, type, compName } = req.body;
   try {
 
     // Convert base64 string back to bytea
@@ -767,16 +767,15 @@ app.post('/signup_google', async (req, res) => {
     const result = await pool.query(
       `INSERT INTO CUSTOMER (
         cus_fname, cus_mname, cus_lname, cus_email, cus_status, 
-        cus_type, cus_auth_method, cus_profile, cus_contact, 
-        cus_province, cus_city, cus_brgy, cus_street, cus_postal
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+        cus_auth_method, cus_profile, cus_contact, 
+        cus_province, cus_city, cus_brgy, cus_street, cus_postal, cus_type, cus_comp_name
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
       [
         fname,
         mname,
         lname,
         email,
-        'Active',                 // cus_status
-        'Non-Contractual',         // cus_type
+        'Active',
         'GOOGLE',                  // cus_auth_method
         photoBytes,                // cus_profile (converted base64 image)
         contact,
@@ -784,7 +783,9 @@ app.post('/signup_google', async (req, res) => {
         city,
         brgy,
         street,
-        postal
+        postal,
+        type,
+        compName
       ]
     );
 
@@ -813,7 +814,7 @@ app.post('/signup_google', async (req, res) => {
 app.post('/signup', async (req, res) => {
   const {
     fname, mname, lname, email, password,
-    contact, province, city, brgy, street, postal
+    contact, province, city, brgy, street, postal, type, compName
   } = req.body;
 
   try {
@@ -822,11 +823,11 @@ app.post('/signup', async (req, res) => {
 
     // Insert the new customer into the CUSTOMER table
     const result = await pool.query(
-      'INSERT INTO CUSTOMER (cus_fname, cus_mname, cus_lname, cus_email, cus_password, cus_contact, cus_province, cus_city, cus_brgy, cus_street, cus_postal, cus_status, cus_type, cus_auth_method) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *',
+      'INSERT INTO CUSTOMER (cus_fname, cus_mname, cus_lname, cus_email, cus_password, cus_contact, cus_province, cus_city, cus_brgy, cus_street, cus_postal, cus_status, cus_auth_method, cus_type, cus_comp_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *',
       [
         fname, mname, lname, email, hashedPassword,
         contact, province, city, brgy, street, postal,
-        'Active', 'Non-Contractual', 'TRASHTRACK'
+        'Active', 'TRASHTRACK', type, compName
       ]
     );
 
