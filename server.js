@@ -63,6 +63,7 @@ app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 const fs = require('fs');
 const https = require('https');
+const { buffer } = require('stream/consumers');
 
 ///
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -3831,6 +3832,87 @@ app.post('/upload_pdf', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+
+
+
+
+
+
+
+
+
+
+///////// PRACTICE ///////////////////////
+app.post('/create', async (req, res) => {
+  const { name, grade, picture } = req.body;
+
+  // Convert base64 string back to bytea
+  const photo = picture ? Buffer.from(picture, 'base64') : null;
+  const insert = await pool.query(`INSERT INTO PRACTICE (name, grade, picture) VALUES($1, $2, $3);`, [name, grade, photo]);
+
+  if (insert.rowCount > 0) {
+    console.log('Inserted succ');
+    res.status(200).json();
+  } else {
+    console.log('Failed to insert');
+    res.status(400).json();
+  }
+});
+
+app.post('/update', async (req, res) => {
+  const { name, grade, picture } = req.body;
+  const image = picture ? Buffer.from(picture, 'base64') : null;
+  const update = await pool.query(`UPDATE PRACTICE SET name = $1, grade = $2, picture = $3;`, [name, grade, image]);
+
+  if (update.rowCount > 0) {
+    console.log('Success update');
+    res.status(200).json();
+  } else {
+    console.log('Failed update');
+    res.status(400).json();
+  }
+});
+
+app.post('/delete', async (req, res) => {
+  const { grade } = req.body;
+  console.log(grade);
+  const deleteUser = await pool.query(`DELETE FROM PRACTICE WHERE grade = $1;`, [grade]);
+
+  if (deleteUser.rowCount > 0) {
+    res.status(200).json();
+    console.log('Deleted Succfly');
+  } else {
+    res.status(400).json();
+    console.log('Deleted failed');
+  }
+});
+
+app.post('/fetch', async (req, res) => {
+  try {
+    const fetchUsers = await pool.query(`SELECT * FROM PRACTICE;`);
+
+    if (fetchUsers.rows.length > 0) {
+      fetchUsers.rows.forEach(element => {
+        if (element.picture) {
+          element.picture = element.picture.toString('base64');
+        }
+      });
+      console.log('fetch success');
+      res.status(200).json(fetchUsers.rows);
+    } else {
+      console.log('fetch failed');
+      res.status(400).json();
+    }
+  } catch (error) {
+    console.error(error);
+  }
+});
+
+
+
+
+
 
 
 // Start the server
