@@ -1,4 +1,4 @@
-
+//NOTE: All in one file is chaotic, must be separated when have time.
 
 const express = require('express');
 const path = require('path');
