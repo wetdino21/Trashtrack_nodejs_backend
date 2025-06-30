@@ -1,1 +1,4 @@
 node_modules/
+
+# remove Environment variables for production use
+#.env
